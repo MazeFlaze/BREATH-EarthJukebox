@@ -23,21 +23,38 @@ export const EarthVisualization: React.FC<EarthVisualizationProps> = ({
     );
   }
 
-  // Calculate atmospheric turbidity visual glow based on observation value
-  // AOD values: 0.1 (clean cyan) -> 0.5 (turbid amber) -> 1.0+ (dense plume orange/red)
-  const aodValue = observation.value;
+  // Calculate atmospheric turbidity visual glow based on observation value & variable
+  const val = observation.value;
+  const isPM25 = observation.unit.includes("µg/m") || observation.variable.toLowerCase().includes("pm");
+  
   let glowColor = "rgba(6, 182, 212, 0.35)"; // cyan
   let turbidityLabel = "Clean Air Column";
 
-  if (aodValue > 0.8) {
-    glowColor = "rgba(239, 68, 68, 0.4)"; // red
-    turbidityLabel = "High Optical Extinction (Dense Plume)";
-  } else if (aodValue > 0.4) {
-    glowColor = "rgba(245, 158, 11, 0.35)"; // amber
-    turbidityLabel = "Moderate Turbidity (Haze / Smoke)";
-  } else if (aodValue > 0.2) {
-    glowColor = "rgba(56, 189, 248, 0.3)"; // sky blue
-    turbidityLabel = "Mild Regional Scattering";
+  if (isPM25) {
+    if (val > 75) {
+      glowColor = "rgba(239, 68, 68, 0.4)"; // red
+      turbidityLabel = "Severe Smoke Loading (Hazardous)";
+    } else if (val > 35) {
+      glowColor = "rgba(245, 158, 11, 0.35)"; // amber
+      turbidityLabel = "Elevated Particulates (Unhealthy)";
+    } else if (val > 15) {
+      glowColor = "rgba(56, 189, 248, 0.3)"; // sky blue
+      turbidityLabel = "Moderate Regional Haze";
+    } else {
+      turbidityLabel = "Clean Air Baseline";
+    }
+  } else {
+    // AOD (dimensionless) or normalized ratio
+    if (val > 0.8) {
+      glowColor = "rgba(239, 68, 68, 0.4)"; // red
+      turbidityLabel = "High Optical Extinction (Dense Plume)";
+    } else if (val > 0.4) {
+      glowColor = "rgba(245, 158, 11, 0.35)"; // amber
+      turbidityLabel = "Moderate Turbidity (Haze / Smoke)";
+    } else if (val > 0.2) {
+      glowColor = "rgba(56, 189, 248, 0.3)"; // sky blue
+      turbidityLabel = "Mild Regional Scattering";
+    }
   }
 
   return (

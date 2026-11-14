@@ -16,15 +16,21 @@ BREATHE is architected into two decoupled modules to maximize parallel developme
 
 ```text
 BREATHE-EarthJukebox/
+├── .agents/                    # Multi-stack Subagent Registry, Rules & Skills
+│   ├── agents.toml             # Role blueprints (python_backend, frontend_developer, qa_reviewer)
+│   ├── rules/AGENTS.md         # Multi-stack engineering governance & safety rules
+│   └── skills/                 # Skills (nasa-earthdata-retrieval, pydantic-v2, python-project-structure)
+│
 ├── frontend/                   # Client application (Next.js, React, Web Audio)
 │   ├── public/                 # Static visual & audio assets
 │   ├── src/                    # App Router, components, hooks, services, types
 │   ├── package.json
 │   └── README.md
 │
-├── backend/                    # Scientific processing & API (FastAPI, Pandas)
+├── backend/                    # Scientific processing & API (FastAPI, Pydantic v2, Pandas)
+│   ├── pyproject.toml          # Python packaging & pytest configuration
 │   ├── src/                    # FastAPI routes, schemas, processors, data
-│   ├── tests/                  # Pytest test suite
+│   ├── tests/                  # Pytest test suite (13+ tests)
 │   ├── scripts/                # CLI data ingestion scripts (N01)
 │   ├── requirements.txt
 │   └── README.md
