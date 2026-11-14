@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -18,6 +19,7 @@ from ..processors.netcdf_processor import NetCDFProcessor
 from ..processors.observation_normalizer import ObservationNormalizer
 from ..providers.geos_cf import GEOSCFProvider
 from ..repositories.dataset_repository import DatasetRepository
+from ..repositories.observation_repository import ObservationRepository
 from ..utils.logger import logger
 
 
@@ -98,17 +100,6 @@ class TemporalQueryService:
             logger.info(f"Cache hit for temporal query [{variable} from {start_dt.isoformat()}]")
             return JukeboxResponse(**cached_result)
 
-        # Gather available hourly files covering the range
-        # Generate expected hourly sequence (e.g. step by 1 hour)
-        expected_hours = pd.date_range(start=start_dt, end=end_dt, freq="1h")
-        files_by_dt = {}
-        for h_dt in expected_hours:
-            py_dt = h_dt.to_pydatetime()
-            expected_fn = self.provider.format_granule_filename(py_dt)
-            local_file = settings.DATA_STORAGE_ROOT / expected_fn
-            if local_file.exists():
-                files_by_dt[py_dt] = local_file
-
         norm_cfg = ObservationNormalizer.get_config(variable)
         norm_meta = (
             NormalizationMeta(
@@ -121,6 +112,62 @@ class TemporalQueryService:
             else None
         )
 
+        var_info = variables_catalog[variable]
+        meta = self.provider.get_source_metadata()
+        provenance = ProvenanceMeta(
+            provider=meta["provider"],
+            sourceUrl=meta["sourceUrl"],
+            productVersion=meta["productVersion"],
+            spatialResolution=meta.get("spatialResolution"),
+            temporalResolution=meta.get("temporalResolution"),
+        )
+
+        # Expected hourly sequence
+        expected_hours = pd.date_range(start=start_dt, end=end_dt, freq="1h")
+
+        # Step 1: Read-Through Database Lookup
+        # Calculate grid cell coordinates
+        grid_lat = round(round(val_lat * 4) / 4, 2)
+        grid_lon = round(round(val_lon * 4) / 4, 2)
+
+        existing_db_samples = ObservationRepository.get_samples_for_grid_and_time_range(
+            db=db,
+            dataset_source_id=dataset_id,
+            variable=variable,
+            grid_lat=grid_lat,
+            grid_lon=grid_lon,
+            start_time=start_dt,
+            end_time=end_dt,
+        )
+        db_samples_by_time = {
+            s.timestamp_utc: s for s in existing_db_samples if s.value is not None
+        }
+
+        # Gather available hourly files covering any missing hours
+        files_by_dt = {}
+        for h_dt in expected_hours:
+            py_dt = h_dt.to_pydatetime()
+            if py_dt not in db_samples_by_time:
+                expected_fn = self.provider.format_granule_filename(py_dt)
+                local_file = settings.DATA_STORAGE_ROOT / expected_fn
+                if local_file.exists():
+                    files_by_dt[py_dt] = local_file
+
+        # Ensure DatasetSource is registered if we need to write samples
+        source = DatasetRepository.get_source(db, dataset_id)
+        if not source:
+            source = DatasetRepository.upsert_source(
+                db=db,
+                source_id=meta["datasetId"],
+                provider=meta["provider"],
+                product=meta["product"],
+                product_version=meta["productVersion"],
+                data_type=meta["dataType"],
+                temporal_resolution=meta["temporalResolution"],
+                spatial_resolution=meta["spatialResolution"],
+                source_url=meta["sourceUrl"],
+            )
+
         points: List[JukeboxPoint] = []
         order_idx = 0
 
@@ -129,40 +176,140 @@ class TemporalQueryService:
             py_dt = h_dt.to_pydatetime()
             iso_time = py_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-            file_path = files_by_dt.get(py_dt)
-            if file_path:
-                with NetCDFProcessor.open_dataset(file_path) as ds:
-                    pt_dict = NetCDFProcessor.extract_point_value(ds, variable, lat, lon, timestamp=py_dt)
-                    val = pt_dict["value"]
-                    norm_val = ObservationNormalizer.normalize(variable, val)
-                    points.append(
-                        JukeboxPoint(
-                            order=order_idx,
-                            locationId=None,
-                            timestamp=iso_time,
-                            requestedCoordinates=CoordinatePair(**pt_dict["requested_coordinates"]),
-                            gridCoordinates=CoordinatePair(**pt_dict["grid_coordinates"]),
-                            value=val,
-                            normalizedValue=norm_val,
-                            quality=pt_dict["quality"],
-                        )
-                    )
-            else:
-                # Explicit missing interval state
-                grid_lat = round(round(val_lat * 4) / 4, 2)
-                grid_lon = round(round(val_lon * 4) / 4, 2)
+            # Check if sample exists in database read-through cache
+            if py_dt in db_samples_by_time:
+                db_sample = db_samples_by_time[py_dt]
+                val = db_sample.value
+                norm_val = ObservationNormalizer.normalize(variable, val)
                 points.append(
                     JukeboxPoint(
                         order=order_idx,
                         locationId=None,
                         timestamp=iso_time,
                         requestedCoordinates=CoordinatePair(lat=lat, lon=lon),
-                        gridCoordinates=CoordinatePair(lat=grid_lat, lon=grid_lon),
-                        value=None,
-                        normalizedValue=None,
-                        quality="missing",
+                        gridCoordinates=CoordinatePair(lat=db_sample.grid_latitude, lon=db_sample.grid_longitude),
+                        value=val,
+                        normalizedValue=norm_val,
+                        quality=db_sample.quality_status,
                     )
                 )
+            else:
+                file_path = files_by_dt.get(py_dt)
+                if file_path:
+                    # Register asset if needed
+                    asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{dataset_id}:{file_path.name}"))
+                    asset = DatasetRepository.get_asset(db, asset_id)
+                    if not asset:
+                        asset = DatasetRepository.register_asset(
+                            db=db,
+                            asset_id=asset_id,
+                            dataset_source_id=dataset_id,
+                            original_filename=file_path.name,
+                            storage_path=str(file_path),
+                            checksum_sha256="",
+                            time_start=py_dt,
+                            time_end=py_dt,
+                        )
+
+                    with NetCDFProcessor.open_dataset(file_path) as ds:
+                        pt_dict = NetCDFProcessor.extract_point_value(ds, variable, lat, lon, timestamp=py_dt)
+                        val = pt_dict["value"]
+                        norm_val = ObservationNormalizer.normalize(variable, val)
+
+                        # Read-Through Persistence: Save extracted point into observation_samples
+                        try:
+                            ObservationRepository.upsert_sample(
+                                db=db,
+                                dataset_source_id=dataset_id,
+                                dataset_asset_id=asset.id,
+                                grid_lat=pt_dict["grid_coordinates"]["lat"],
+                                grid_lon=pt_dict["grid_coordinates"]["lon"],
+                                timestamp_utc=py_dt,
+                                variable=variable,
+                                value=val,
+                                unit=pt_dict["unit"],
+                                quality_status=pt_dict["quality"],
+                            )
+                        except Exception as e:
+                            logger.warning(f"Could not persist temporal sample to DB: {e}")
+
+                        points.append(
+                            JukeboxPoint(
+                                order=order_idx,
+                                locationId=None,
+                                timestamp=iso_time,
+                                requestedCoordinates=CoordinatePair(**pt_dict["requested_coordinates"]),
+                                gridCoordinates=CoordinatePair(**pt_dict["grid_coordinates"]),
+                                value=val,
+                                normalizedValue=norm_val,
+                                quality=pt_dict["quality"],
+                            )
+                        )
+                else:
+                    # Attempt remote OPeNDAP slice before marking missing
+                    opendap_pt = self.provider.extract_point_opendap(py_dt, lat, lon, variable)
+                    if opendap_pt and opendap_pt.get("value") is not None:
+                        val = opendap_pt["value"]
+                        norm_val = ObservationNormalizer.normalize(variable, val)
+
+                        # Register remote OPeNDAP asset record
+                        opendap_fn = self.provider.format_granule_filename(py_dt)
+                        asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{dataset_id}:{opendap_fn}"))
+                        asset = DatasetRepository.get_asset(db, asset_id)
+                        if not asset:
+                            asset = DatasetRepository.register_asset(
+                                db=db,
+                                asset_id=asset_id,
+                                dataset_source_id=dataset_id,
+                                original_filename=opendap_fn,
+                                storage_path=f"opendap:{self.provider.build_opendap_url(py_dt)}",
+                                checksum_sha256="",
+                                time_start=py_dt,
+                                time_end=py_dt,
+                            )
+
+                        try:
+                            ObservationRepository.upsert_sample(
+                                db=db,
+                                dataset_source_id=dataset_id,
+                                dataset_asset_id=asset.id,
+                                grid_lat=opendap_pt["grid_coordinates"]["lat"],
+                                grid_lon=opendap_pt["grid_coordinates"]["lon"],
+                                timestamp_utc=py_dt,
+                                variable=variable,
+                                value=val,
+                                unit=opendap_pt["unit"],
+                                quality_status=opendap_pt["quality"],
+                            )
+                        except Exception as e:
+                            logger.warning(f"Could not persist OPeNDAP temporal sample to DB: {e}")
+
+                        points.append(
+                            JukeboxPoint(
+                                order=order_idx,
+                                locationId=None,
+                                timestamp=iso_time,
+                                requestedCoordinates=CoordinatePair(**opendap_pt["requested_coordinates"]),
+                                gridCoordinates=CoordinatePair(**opendap_pt["grid_coordinates"]),
+                                value=val,
+                                normalizedValue=norm_val,
+                                quality=opendap_pt["quality"],
+                            )
+                        )
+                    else:
+                        # Explicit missing interval state
+                        points.append(
+                            JukeboxPoint(
+                                order=order_idx,
+                                locationId=None,
+                                timestamp=iso_time,
+                                requestedCoordinates=CoordinatePair(lat=lat, lon=lon),
+                                gridCoordinates=CoordinatePair(lat=grid_lat, lon=grid_lon),
+                                value=None,
+                                normalizedValue=None,
+                                quality="missing",
+                            )
+                        )
             order_idx += 1
 
         var_info = variables_catalog[variable]
