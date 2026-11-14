@@ -1,6 +1,7 @@
 # BREATHE – Contribution & Integration Guide
 
 > **Target:** 6-Person Hackathon Team (24-Hour Velocity)  
+> **Structure:** Decoupled Frontend (`frontend/`) and Backend (`backend/`)  
 > **Goal:** Rapid parallel progress without merge conflicts or regressions.
 
 ---
@@ -11,10 +12,11 @@ All work must occur on dedicated, scoped topic branches branching from `main`.
 
 | Prefix | Scope / Workstream | Example |
 | :--- | :--- | :--- |
-| `feat/` | New features or components | `feat/audio-waveform-selector` |
+| `feat/` | New features (frontend or backend) | `feat/frontend-comparison-modal` |
 | `data/` | N01 Data ingestion & preprocessing | `data/nasa-gibs-aod-ingest` |
-| `science/` | N02 Scientific validation & copy | `science/aod-vs-aqi-docs` |
+| `backend/` | N01 Backend API routes & processors | `backend/add-range-endpoint` |
 | `audio/` | N03 Sonification algorithms & Web Audio | `audio/binaural-panning` |
+| `science/` | N02 Scientific validation & copy | `science/aod-vs-aqi-docs` |
 | `ui/` | N05 Visual design & styling polish | `ui/atmospheric-halo-glow` |
 | `fix/` | Bug fixes or interface adjustments | `fix/timeline-step-boundary` |
 | `docs/` | Documentation & presentation | `docs/presentation-slides` |
@@ -29,7 +31,7 @@ Follow standard Conventional Commits format:
 ```
 
 **Allowed Types:**
-- `feat`: A new feature for the user or engine.
+- `feat`: A new feature for user or engine.
 - `fix`: A bug fix.
 - `data`: NASA dataset updates or transformations.
 - `audio`: Sound synthesis or mapping updates.
@@ -40,9 +42,9 @@ Follow standard Conventional Commits format:
 
 **Examples:**
 ```text
-feat(audio): add exponential frequency glide between observations
-data(n01): normalize MODIS AOD 550nm time series into JSON
-fix(timeline): prevent out-of-bounds error on last observation
+feat(frontend): connect dataService to FastAPI backend endpoint
+data(backend): add MODIS AOD 550nm cleaning processor with Pandas
+audio(frontend): tune exponential frequency ramp to 80ms
 docs(science): clarify column AOD distinction from ground-level AQI
 ```
 
@@ -50,21 +52,19 @@ docs(science): clarify column AOD distinction from ground-level AQI
 
 ## 3. File Ownership Matrix
 
-To minimize merge conflicts during rapid hackathon sprints, adhere to strict file ownership:
-
 | Directory / File | Primary Owner | Secondary / Reviewer |
 | :--- | :--- | :--- |
-| `src/data/` | **N01 – Data Engineering** | N02 |
-| `src/services/dataService.ts` | **N01 – Data Engineering** | N04 |
-| `src/types/observation.ts`, `src/types/dataset.ts` | **N02 – Scientific Research** | N01, N04 |
-| `src/types/audio.ts` | **N03 – Sonification** | N04 |
-| `src/services/sonificationService.ts` | **N03 – Sonification** | N04 |
-| `src/hooks/useSonification.ts` | **N03 – Sonification** | N04 |
-| `src/components/audio/` | **N03 & N04** | N05 |
-| `src/components/visualization/` | **N04 – Frontend** | N05 |
-| `src/app/` | **N04 – Frontend** | N05 |
-| `src/components/science/` | **N02 & N05** | N04 |
-| `public/` | **N05 – UI/UX & Storytelling** | N04 |
+| `backend/src/data/` | **N01 – Data Engineering** | N02 |
+| `backend/src/processors/` | **N01 – Data Engineering** | N02 |
+| `backend/src/api/` | **N01 – Data Engineering** | N04, N06 |
+| `docs/DATA_CONTRACT.md`, `docs/SRS.md` | **N02 – Scientific Research** | N01, N04 |
+| `frontend/src/types/` | **N02 & N04** | N01, N03 |
+| `frontend/src/services/sonificationService.ts` | **N03 – Sonification** | N04 |
+| `frontend/src/hooks/useSonification.ts` | **N03 – Sonification** | N04 |
+| `frontend/src/components/audio/` | **N03 & N04** | N05 |
+| `frontend/src/components/visualization/` | **N04 – Frontend** | N05 |
+| `frontend/src/app/` | **N04 – Frontend** | N05 |
+| `frontend/public/` | **N05 – UI/UX & Storytelling** | N04 |
 | `docs/TEAM_TASKS.md`, `README.md` | **N06 – Integration & QA** | All |
 
 *Rule:* If you must modify a file owned by another workstream, coordinate with the owner in chat first!
@@ -78,14 +78,20 @@ To minimize merge conflicts during rapid hackathon sprints, adhere to strict fil
    git fetch origin
    git merge origin/main
    ```
-2. **Static Check:** Verify locally before requesting review:
-   ```bash
-   npm run typecheck
-   npm run lint
-   ```
+2. **Local Verification:**
+   - **Frontend changes:**
+     ```bash
+     cd frontend
+     npm run typecheck
+     npm run lint
+     ```
+   - **Backend changes:**
+     ```bash
+     pytest backend/tests
+     ```
 3. **PR Description:** Include:
-   - Workstream ID (e.g. `[N01]`)
+   - Workstream ID (e.g. `[N01]`, `[N04]`)
    - Summary of changes
    - Manual testing steps executed
    - Confirmation that no secrets or mock data were misrepresented as verified NASA data.
-4. **Approval Gate:** Every PR requires at least 1 review approval (preferably N06 or the file owner).
+4. **Approval Gate:** Every PR requires at least 1 review approval (N06 or the module owner).
