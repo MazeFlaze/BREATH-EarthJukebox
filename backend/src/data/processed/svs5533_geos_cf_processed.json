@@ -1,12 +1,12 @@
 {
   "_meta": {
-    "notice": "VERIFIED NASA SVS 5533 & GEOS-CF SCIENTIFIC DATASET",
-    "disclaimer": "Dataset constructed from NASA Scientific Visualization Studio (SVS #5533) and NASA Global Modeling and Assimilation Office (GMAO) GEOS-CF model assimilation. Satellite imagery served via NASA GIBS. PM2.5 represents surface concentration in µg/m³ and is distinct from dimensionless Aerosol Optical Depth (AOD).",
-    "isMock": false,
+    "notice": "PROTOTYPE DEMONSTRATION NASA SVS 5533 & GEOS-CF DATASET (SYNTHETIC EXAMPLES)",
+    "disclaimer": "Dataset constructed as an illustrative prototype demonstration based on NASA Scientific Visualization Studio (SVS #5533) event descriptions. Satellite imagery served via NASA GIBS. These values are flagged as synthetic (isMock=true). Scientifically verified observations must be ingested directly from authentic GEOS-CF NetCDF-4 model assimilation files.",
+    "isMock": true,
     "targetVariable": "Surface Particulate Matter (PM2.5)",
     "unit": "µg/m³",
-    "version": "1.0.0-verified-geos-cf",
-    "generatedAt": "2026-11-14T03:47:53.537037+00:00"
+    "version": "1.0.0-prototype-svs",
+    "generatedAt": "2026-11-14T06:14:32.487170+00:00"
   },
   "dataset": {
     "id": "nasa-svs5533-geos-cf-2024",
@@ -15,7 +15,7 @@
     "sourceUrl": "https://svs.gsfc.nasa.gov/5533",
     "variable": "Particulate Matter (PM2.5)",
     "unit": "µg/m³",
-    "description": "Tracking the transport and chemical evolution of fine Particulate Matter (PM2.5) during the active July-August 2024 North American wildfire season, simulated by the Goddard Earth Observing System Composition Forecasting (GEOS-CF) system.",
+    "description": "Illustrative prototype demonstration dataset tracking fine Particulate Matter (PM2.5) across the July-August 2024 North American wildfire season. Derived from SVS 5533 narrative descriptions; marked as synthetic mock data pending raw NetCDF grid extraction.",
     "observations": [
       {
         "id": "geos-cf-2024-07-15-001",
@@ -25,7 +25,7 @@
         "unit": "µg/m³",
         "variable": "Particulate Matter (PM2.5)",
         "description": "Baseline atmospheric conditions across western Canada prior to major ignition complex. Normal biogenic background aerosol levels.",
-        "isMock": false,
+        "isMock": true,
         "coordinates": {
           "lat": 53.5461,
           "lon": -113.4938,
@@ -46,7 +46,7 @@
         "unit": "µg/m³",
         "variable": "Particulate Matter (PM2.5)",
         "description": "Outbreak of Jasper Wildfire complex. Extreme pyrocumulonimbus (pyroCb) convective updrafts inject dense carbonaceous aerosols into the free troposphere.",
-        "isMock": false,
+        "isMock": true,
         "coordinates": {
           "lat": 52.8737,
           "lon": -118.0814,
@@ -67,7 +67,7 @@
         "unit": "µg/m³",
         "variable": "Particulate Matter (PM2.5)",
         "description": "Severe fire front expansion. Surface PM2.5 spikes past hazardous thresholds. High optical extinction with massive Carbon Monoxide (CO) co-emission.",
-        "isMock": false,
+        "isMock": true,
         "coordinates": {
           "lat": 52.8737,
           "lon": -118.0814,
@@ -88,7 +88,7 @@
         "unit": "µg/m³",
         "variable": "Particulate Matter (PM2.5)",
         "description": "Broad synoptic jet stream carries the smoke plume southeastward across the Northern Great Plains into North Dakota and Minnesota.",
-        "isMock": false,
+        "isMock": true,
         "coordinates": {
           "lat": 46.8772,
           "lon": -96.7898,
@@ -109,7 +109,7 @@
         "unit": "µg/m³",
         "variable": "Particulate Matter (PM2.5)",
         "description": "Dense haze settles over the Upper Midwest. Entrainment of elevated wildfire aerosols into the planetary boundary layer during afternoon solar mixing.",
-        "isMock": false,
+        "isMock": true,
         "coordinates": {
           "lat": 41.8781,
           "lon": -87.6298,
@@ -130,7 +130,7 @@
         "unit": "µg/m³",
         "variable": "Particulate Matter (PM2.5)",
         "description": "Plume reaches the US Atlantic Seaboard. Significant light scattering produces milky skies and elevated ground-level particulate loading.",
-        "isMock": false,
+        "isMock": true,
         "coordinates": {
           "lat": 40.7128,
           "lon": -74.006,
@@ -151,7 +151,7 @@
         "unit": "µg/m³",
         "variable": "Particulate Matter (PM2.5)",
         "description": "Oceanic advection. Diluted stratospheric and upper-tropospheric aerosol layers drift across the North Atlantic towards Western Europe.",
-        "isMock": false,
+        "isMock": true,
         "coordinates": {
           "lat": 45.0,
           "lon": -40.0,
@@ -172,7 +172,7 @@
         "unit": "µg/m³",
         "variable": "Particulate Matter (PM2.5)",
         "description": "Post-event recovery across North America as cyclonic frontal passage scours the boundary layer, returning aerosol concentrations to clean baseline.",
-        "isMock": false,
+        "isMock": true,
         "coordinates": {
           "lat": 53.5461,
           "lon": -113.4938,
@@ -186,7 +186,7 @@
         }
       }
     ],
-    "isMock": false,
+    "isMock": true,
     "range": {
       "min": 11.4,
       "max": 182.5
