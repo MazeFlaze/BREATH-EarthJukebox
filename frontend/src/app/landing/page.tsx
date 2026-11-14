@@ -104,7 +104,7 @@ export default function LandingPage() {
           />
 
           {/* Navigation inside Left Panel */}
-          <header className="relative z-10 flex items-center justify-between gap-4 -mt-1 sm:-mt-2">
+          <header className="relative z-10 flex items-center justify-between gap-4 -mt-1 sm:-mt-2 -mr-3 sm:-mr-4 lg:-mr-5">
             <Link
               href="/"
               className="flex items-center gap-3 hover:scale-105 active:scale-95 transition-transform shrink-0"
@@ -115,13 +115,13 @@ export default function LandingPage() {
               </span>
             </Link>
 
-            {/* Pill Capsule Top Bar - Shifted to right side */}
+            {/* Top Bar - Less rounded corners, attached to the right, wider item spacing */}
             <nav
               aria-label="Quick Navigation"
-              className="liquid-glass rounded-full px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 sm:gap-3 border border-white/15 shadow-[inset_0_1px_2px_rgba(255,255,255,0.25),0_6px_25px_rgba(0,0,0,0.5)] backdrop-blur-2xl bg-white/[0.06] shrink-0"
+              className="liquid-glass rounded-xl sm:rounded-2xl px-4 sm:px-6 py-2 sm:py-2.5 flex items-center gap-4 sm:gap-6 border border-white/15 shadow-[inset_0_1px_2px_rgba(255,255,255,0.25),0_6px_25px_rgba(0,0,0,0.5)] backdrop-blur-2xl bg-white/[0.06] shrink-0"
             >
               {/* Inner glowing sphere / indicator dot */}
-              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-b from-white/35 via-white/10 to-transparent shadow-[inset_0_1px_2px_rgba(255,255,255,0.5),0_2px_4px_rgba(0,0,0,0.6)] border border-white/25 flex items-center justify-center shrink-0">
+              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-b from-white/35 via-white/10 to-transparent shadow-[inset_0_1px_2px_rgba(255,255,255,0.5),0_2px_4px_rgba(0,0,0,0.6)] border border-white/25 flex items-center justify-center shrink-0">
                 <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.9)]" />
               </div>
 
@@ -129,7 +129,7 @@ export default function LandingPage() {
               <button
                 type="button"
                 onClick={() => setActiveModal('experience')}
-                className="px-3.5 py-1.5 rounded-full text-sm sm:text-base font-medium text-white/90 hover:text-white hover:bg-white/15 transition-all cursor-pointer whitespace-nowrap"
+                className="px-4 py-1.5 rounded-lg text-sm sm:text-base font-medium text-white/90 hover:text-white hover:bg-white/15 transition-all cursor-pointer whitespace-nowrap"
               >
                 Experience
               </button>
@@ -138,7 +138,7 @@ export default function LandingPage() {
               <button
                 type="button"
                 onClick={() => setActiveModal('about')}
-                className="px-3.5 py-1.5 rounded-full text-sm sm:text-base font-medium text-white/90 hover:text-white hover:bg-white/15 transition-all cursor-pointer whitespace-nowrap"
+                className="px-4 py-1.5 rounded-lg text-sm sm:text-base font-medium text-white/90 hover:text-white hover:bg-white/15 transition-all cursor-pointer whitespace-nowrap"
               >
                 About
               </button>
@@ -148,7 +148,7 @@ export default function LandingPage() {
                 type="button"
                 onClick={() => setActiveModal('menu')}
                 aria-label="Open navigation menu"
-                className="w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center text-white/80 hover:text-white hover:bg-white/15 transition-all cursor-pointer shrink-0 ml-0.5"
+                className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center text-white/80 hover:text-white hover:bg-white/15 transition-all cursor-pointer shrink-0"
               >
                 <Menu className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
               </button>
