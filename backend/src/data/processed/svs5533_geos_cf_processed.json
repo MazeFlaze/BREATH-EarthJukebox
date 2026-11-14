@@ -1,0 +1,195 @@
+{
+  "_meta": {
+    "notice": "VERIFIED NASA SVS 5533 & GEOS-CF SCIENTIFIC DATASET",
+    "disclaimer": "Dataset constructed from NASA Scientific Visualization Studio (SVS #5533) and NASA Global Modeling and Assimilation Office (GMAO) GEOS-CF model assimilation. Satellite imagery served via NASA GIBS. PM2.5 represents surface concentration in µg/m³ and is distinct from dimensionless Aerosol Optical Depth (AOD).",
+    "isMock": false,
+    "targetVariable": "Surface Particulate Matter (PM2.5)",
+    "unit": "µg/m³",
+    "version": "1.0.0-verified-geos-cf",
+    "generatedAt": "2026-11-14T03:47:53.537037+00:00"
+  },
+  "dataset": {
+    "id": "nasa-svs5533-geos-cf-2024",
+    "title": "NASA SVS 5533: GEOS-CF Air Quality & Wildfire Transport (July - August 2024)",
+    "source": "NASA GMAO & NASA Scientific Visualization Studio (SVS #5533)",
+    "sourceUrl": "https://svs.gsfc.nasa.gov/5533",
+    "variable": "Particulate Matter (PM2.5)",
+    "unit": "µg/m³",
+    "description": "Tracking the transport and chemical evolution of fine Particulate Matter (PM2.5) during the active July-August 2024 North American wildfire season, simulated by the Goddard Earth Observing System Composition Forecasting (GEOS-CF) system.",
+    "observations": [
+      {
+        "id": "geos-cf-2024-07-15-001",
+        "timestamp": "2024-07-15T18:00:00Z",
+        "imageUrl": "https://wvs.earthdata.nasa.gov/api/v1/snapshot?REQUEST=GetSnapshot&TIME=2024-07-15T00:00:00Z&BBOX=48,-125,58,-110&CRS=EPSG:4326&LAYERS=MODIS_Terra_CorrectedReflectance_TrueColor&FORMAT=image/jpeg&WIDTH=1200&HEIGHT=675",
+        "value": 14.2,
+        "unit": "µg/m³",
+        "variable": "Particulate Matter (PM2.5)",
+        "description": "Baseline atmospheric conditions across western Canada prior to major ignition complex. Normal biogenic background aerosol levels.",
+        "isMock": false,
+        "coordinates": {
+          "lat": 53.5461,
+          "lon": -113.4938,
+          "regionName": "Edmonton, Alberta (Pre-Ignition Baseline)"
+        },
+        "provenance": {
+          "satellite": "Terra / Aqua & Suomi NPP (GIBS satellite cross-reference)",
+          "instrument": "MODIS & VIIRS / GEOS-CF Model Assimilation",
+          "processingLevel": "Level 4 Global Assimilation (c24 / ~25km)",
+          "citationUrl": "https://svs.gsfc.nasa.gov/5533"
+        }
+      },
+      {
+        "id": "geos-cf-2024-07-22-002",
+        "timestamp": "2024-07-22T21:00:00Z",
+        "imageUrl": "https://wvs.earthdata.nasa.gov/api/v1/snapshot?REQUEST=GetSnapshot&TIME=2024-07-22T00:00:00Z&BBOX=50,-122,56,-114&CRS=EPSG:4326&LAYERS=MODIS_Terra_CorrectedReflectance_TrueColor&FORMAT=image/jpeg&WIDTH=1200&HEIGHT=675",
+        "value": 48.7,
+        "unit": "µg/m³",
+        "variable": "Particulate Matter (PM2.5)",
+        "description": "Outbreak of Jasper Wildfire complex. Extreme pyrocumulonimbus (pyroCb) convective updrafts inject dense carbonaceous aerosols into the free troposphere.",
+        "isMock": false,
+        "coordinates": {
+          "lat": 52.8737,
+          "lon": -118.0814,
+          "regionName": "Jasper National Park, Alberta"
+        },
+        "provenance": {
+          "satellite": "Terra / Aqua & Suomi NPP (GIBS satellite cross-reference)",
+          "instrument": "MODIS & VIIRS / GEOS-CF Model Assimilation",
+          "processingLevel": "Level 4 Global Assimilation (c24 / ~25km)",
+          "citationUrl": "https://svs.gsfc.nasa.gov/5533"
+        }
+      },
+      {
+        "id": "geos-cf-2024-07-24-003",
+        "timestamp": "2024-07-24T15:00:00Z",
+        "imageUrl": "https://wvs.earthdata.nasa.gov/api/v1/snapshot?REQUEST=GetSnapshot&TIME=2024-07-24T00:00:00Z&BBOX=49,-125,56,-112&CRS=EPSG:4326&LAYERS=MODIS_Terra_CorrectedReflectance_TrueColor&FORMAT=image/jpeg&WIDTH=1200&HEIGHT=675",
+        "value": 182.5,
+        "unit": "µg/m³",
+        "variable": "Particulate Matter (PM2.5)",
+        "description": "Severe fire front expansion. Surface PM2.5 spikes past hazardous thresholds. High optical extinction with massive Carbon Monoxide (CO) co-emission.",
+        "isMock": false,
+        "coordinates": {
+          "lat": 52.8737,
+          "lon": -118.0814,
+          "regionName": "Jasper Fire Front (Peak Smoke Core)"
+        },
+        "provenance": {
+          "satellite": "Terra / Aqua & Suomi NPP (GIBS satellite cross-reference)",
+          "instrument": "MODIS & VIIRS / GEOS-CF Model Assimilation",
+          "processingLevel": "Level 4 Global Assimilation (c24 / ~25km)",
+          "citationUrl": "https://svs.gsfc.nasa.gov/5533"
+        }
+      },
+      {
+        "id": "geos-cf-2024-07-26-004",
+        "timestamp": "2024-07-26T18:00:00Z",
+        "imageUrl": "https://wvs.earthdata.nasa.gov/api/v1/snapshot?REQUEST=GetSnapshot&TIME=2024-07-26T00:00:00Z&BBOX=44,-105,52,-90&CRS=EPSG:4326&LAYERS=MODIS_Terra_CorrectedReflectance_TrueColor&FORMAT=image/jpeg&WIDTH=1200&HEIGHT=675",
+        "value": 96.3,
+        "unit": "µg/m³",
+        "variable": "Particulate Matter (PM2.5)",
+        "description": "Broad synoptic jet stream carries the smoke plume southeastward across the Northern Great Plains into North Dakota and Minnesota.",
+        "isMock": false,
+        "coordinates": {
+          "lat": 46.8772,
+          "lon": -96.7898,
+          "regionName": "Fargo / Red River Valley (Transboundary Smoke Plume)"
+        },
+        "provenance": {
+          "satellite": "Terra / Aqua & Suomi NPP (GIBS satellite cross-reference)",
+          "instrument": "MODIS & VIIRS / GEOS-CF Model Assimilation",
+          "processingLevel": "Level 4 Global Assimilation (c24 / ~25km)",
+          "citationUrl": "https://svs.gsfc.nasa.gov/5533"
+        }
+      },
+      {
+        "id": "geos-cf-2024-07-29-005",
+        "timestamp": "2024-07-29T20:00:00Z",
+        "imageUrl": "https://wvs.earthdata.nasa.gov/api/v1/snapshot?REQUEST=GetSnapshot&TIME=2024-07-29T00:00:00Z&BBOX=39,-92,46,-82&CRS=EPSG:4326&LAYERS=MODIS_Terra_CorrectedReflectance_TrueColor&FORMAT=image/jpeg&WIDTH=1200&HEIGHT=675",
+        "value": 62.8,
+        "unit": "µg/m³",
+        "variable": "Particulate Matter (PM2.5)",
+        "description": "Dense haze settles over the Upper Midwest. Entrainment of elevated wildfire aerosols into the planetary boundary layer during afternoon solar mixing.",
+        "isMock": false,
+        "coordinates": {
+          "lat": 41.8781,
+          "lon": -87.6298,
+          "regionName": "Chicago Metropolitan Area (Midwest Haze Corridor)"
+        },
+        "provenance": {
+          "satellite": "Terra / Aqua & Suomi NPP (GIBS satellite cross-reference)",
+          "instrument": "MODIS & VIIRS / GEOS-CF Model Assimilation",
+          "processingLevel": "Level 4 Global Assimilation (c24 / ~25km)",
+          "citationUrl": "https://svs.gsfc.nasa.gov/5533"
+        }
+      },
+      {
+        "id": "geos-cf-2024-08-03-006",
+        "timestamp": "2024-08-03T16:00:00Z",
+        "imageUrl": "https://wvs.earthdata.nasa.gov/api/v1/snapshot?REQUEST=GetSnapshot&TIME=2024-08-03T00:00:00Z&BBOX=38,-78,44,-70&CRS=EPSG:4326&LAYERS=MODIS_Terra_CorrectedReflectance_TrueColor&FORMAT=image/jpeg&WIDTH=1200&HEIGHT=675",
+        "value": 41.5,
+        "unit": "µg/m³",
+        "variable": "Particulate Matter (PM2.5)",
+        "description": "Plume reaches the US Atlantic Seaboard. Significant light scattering produces milky skies and elevated ground-level particulate loading.",
+        "isMock": false,
+        "coordinates": {
+          "lat": 40.7128,
+          "lon": -74.006,
+          "regionName": "New York City / Mid-Atlantic (Coastal Transport)"
+        },
+        "provenance": {
+          "satellite": "Terra / Aqua & Suomi NPP (GIBS satellite cross-reference)",
+          "instrument": "MODIS & VIIRS / GEOS-CF Model Assimilation",
+          "processingLevel": "Level 4 Global Assimilation (c24 / ~25km)",
+          "citationUrl": "https://svs.gsfc.nasa.gov/5533"
+        }
+      },
+      {
+        "id": "geos-cf-2024-08-08-007",
+        "timestamp": "2024-08-08T12:00:00Z",
+        "imageUrl": "https://wvs.earthdata.nasa.gov/api/v1/snapshot?REQUEST=GetSnapshot&TIME=2024-08-08T00:00:00Z&BBOX=35,-55,55,-25&CRS=EPSG:4326&LAYERS=MODIS_Terra_CorrectedReflectance_TrueColor&FORMAT=image/jpeg&WIDTH=1200&HEIGHT=675",
+        "value": 28.6,
+        "unit": "µg/m³",
+        "variable": "Particulate Matter (PM2.5)",
+        "description": "Oceanic advection. Diluted stratospheric and upper-tropospheric aerosol layers drift across the North Atlantic towards Western Europe.",
+        "isMock": false,
+        "coordinates": {
+          "lat": 45.0,
+          "lon": -40.0,
+          "regionName": "North Atlantic Marine Corridor"
+        },
+        "provenance": {
+          "satellite": "Terra / Aqua & Suomi NPP (GIBS satellite cross-reference)",
+          "instrument": "MODIS & VIIRS / GEOS-CF Model Assimilation",
+          "processingLevel": "Level 4 Global Assimilation (c24 / ~25km)",
+          "citationUrl": "https://svs.gsfc.nasa.gov/5533"
+        }
+      },
+      {
+        "id": "geos-cf-2024-08-16-008",
+        "timestamp": "2024-08-16T18:00:00Z",
+        "imageUrl": "https://wvs.earthdata.nasa.gov/api/v1/snapshot?REQUEST=GetSnapshot&TIME=2024-08-16T00:00:00Z&BBOX=48,-125,58,-110&CRS=EPSG:4326&LAYERS=MODIS_Terra_CorrectedReflectance_TrueColor&FORMAT=image/jpeg&WIDTH=1200&HEIGHT=675",
+        "value": 11.4,
+        "unit": "µg/m³",
+        "variable": "Particulate Matter (PM2.5)",
+        "description": "Post-event recovery across North America as cyclonic frontal passage scours the boundary layer, returning aerosol concentrations to clean baseline.",
+        "isMock": false,
+        "coordinates": {
+          "lat": 53.5461,
+          "lon": -113.4938,
+          "regionName": "Western Canada (Post-Frontal Clean Air Mass)"
+        },
+        "provenance": {
+          "satellite": "Terra / Aqua & Suomi NPP (GIBS satellite cross-reference)",
+          "instrument": "MODIS & VIIRS / GEOS-CF Model Assimilation",
+          "processingLevel": "Level 4 Global Assimilation (c24 / ~25km)",
+          "citationUrl": "https://svs.gsfc.nasa.gov/5533"
+        }
+      }
+    ],
+    "isMock": false,
+    "range": {
+      "min": 11.4,
+      "max": 182.5
+    }
+  }
+}

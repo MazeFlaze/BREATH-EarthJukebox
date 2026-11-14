@@ -1,7 +1,10 @@
 import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-import pandas as pd
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
 from ..api.schemas.observation_schema import DatasetSchema, ObservationSchema, DatasetRangeSchema
 from ..utils.logger import logger
 
@@ -20,8 +23,10 @@ class NasaAodProcessor:
     """
 
     @staticmethod
-    def clean_raw_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    def clean_raw_dataframe(df: Any) -> Any:
         """Cleans and standardizes raw NASA tabular observation records."""
+        if pd is None:
+            raise ImportError("pandas is required for dataframe cleaning. Install pandas with 'pip install pandas'.")
         # Drop rows with invalid or missing values
         cleaned = df.dropna(subset=["timestamp", "value"]).copy()
 
