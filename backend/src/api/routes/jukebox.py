@@ -4,9 +4,13 @@ from sqlalchemy.orm import Session
 
 from ...core.database import get_db
 from ...api.schemas.jukebox_schema import (
+    NormalizationMethodType,
     SpatialJukeboxRequest,
     JukeboxResponse,
+    RegionJukeboxRequest,
+    RegionJukeboxResponse,
 )
+from ...services.region_query_service import region_query_service
 from ...services.spatial_query_service import spatial_query_service
 from ...services.temporal_query_service import temporal_query_service
 
@@ -40,6 +44,11 @@ def get_temporal_jukebox(
     start: str = Query(..., description="Start timestamp (ISO 8601 UTC)"),
     end: str = Query(..., description="End timestamp (ISO 8601 UTC)"),
     interval: str = Query("1h", description="Sampling interval (default '1h')"),
+    normalization_method: NormalizationMethodType = Query(
+        "fixed_reference_range",
+        description="Normalization strategy ('fixed_reference_range' default or 'log_scale'/'calibrated')",
+    ),
+    offline_only: bool = Query(False, description="Skip remote OPeNDAP fallback when running offline"),
     db: Session = Depends(get_db),
 ):
     return temporal_query_service.execute_temporal_query(
@@ -51,4 +60,19 @@ def get_temporal_jukebox(
         end_time_str=end,
         interval=interval,
         db=db,
+        normalization_method=normalization_method,
+        offline_only=offline_only,
     )
+
+
+@router.post(
+    "/region",
+    response_model=RegionJukeboxResponse,
+    summary="Execute Single-ROI Region Jukebox Mode",
+    description="Aggregates spatial grid statistics (mean, p90, max, tier ratios) for one drag-box ROI with calibrated perceptual normalization and ppbv conversion.",
+)
+def post_region_jukebox(
+    request: RegionJukeboxRequest,
+    db: Session = Depends(get_db),
+):
+    return region_query_service.execute_region_query(request, db=db)

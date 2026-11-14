@@ -1,0 +1,734 @@
+{
+  "generatedAt": "2026-11-14T15:58:22Z",
+  "projection": "EPSG:4326",
+  "width": 1920,
+  "height": 1080,
+  "bounds": {
+    "latMin": -90.0,
+    "latMax": 90.0,
+    "lonMin": -180.0,
+    "lonMax": 180.0
+  },
+  "maps": [
+    {
+      "variable": "PM25_RH35",
+      "timestamp": "2026-11-12T00:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_0030z.png",
+      "cmap": "inferno",
+      "vmin": 0.0,
+      "vmax": 150.0,
+      "displayUnit": "µg/m³",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0030z.R0.nc4"
+    },
+    {
+      "variable": "NO2",
+      "timestamp": "2026-11-12T00:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_NO2_20261112_0030z.png",
+      "cmap": "magma",
+      "vmin": 0.0,
+      "vmax": 45.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0030z.R0.nc4"
+    },
+    {
+      "variable": "O3",
+      "timestamp": "2026-11-12T00:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_O3_20261112_0030z.png",
+      "cmap": "viridis",
+      "vmin": 10.0,
+      "vmax": 50.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0030z.R0.nc4"
+    },
+    {
+      "variable": "CO",
+      "timestamp": "2026-11-12T00:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_CO_20261112_0030z.png",
+      "cmap": "cividis",
+      "vmin": 50.0,
+      "vmax": 600.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0030z.R0.nc4"
+    },
+    {
+      "variable": "SO2",
+      "timestamp": "2026-11-12T00:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_SO2_20261112_0030z.png",
+      "cmap": "plasma",
+      "vmin": 0.0,
+      "vmax": 25.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0030z.R0.nc4"
+    },
+    {
+      "variable": "PM25_RH35",
+      "timestamp": "2026-11-12T03:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_0330z.png",
+      "cmap": "inferno",
+      "vmin": 0.0,
+      "vmax": 150.0,
+      "displayUnit": "µg/m³",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0330z.R0.nc4"
+    },
+    {
+      "variable": "NO2",
+      "timestamp": "2026-11-12T03:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_NO2_20261112_0330z.png",
+      "cmap": "magma",
+      "vmin": 0.0,
+      "vmax": 45.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0330z.R0.nc4"
+    },
+    {
+      "variable": "O3",
+      "timestamp": "2026-11-12T03:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_O3_20261112_0330z.png",
+      "cmap": "viridis",
+      "vmin": 10.0,
+      "vmax": 50.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0330z.R0.nc4"
+    },
+    {
+      "variable": "CO",
+      "timestamp": "2026-11-12T03:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_CO_20261112_0330z.png",
+      "cmap": "cividis",
+      "vmin": 50.0,
+      "vmax": 600.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0330z.R0.nc4"
+    },
+    {
+      "variable": "SO2",
+      "timestamp": "2026-11-12T03:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_SO2_20261112_0330z.png",
+      "cmap": "plasma",
+      "vmin": 0.0,
+      "vmax": 25.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0330z.R0.nc4"
+    },
+    {
+      "variable": "PM25_RH35",
+      "timestamp": "2026-11-12T06:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_0630z.png",
+      "cmap": "inferno",
+      "vmin": 0.0,
+      "vmax": 150.0,
+      "displayUnit": "µg/m³",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0630z.R0.nc4"
+    },
+    {
+      "variable": "NO2",
+      "timestamp": "2026-11-12T06:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_NO2_20261112_0630z.png",
+      "cmap": "magma",
+      "vmin": 0.0,
+      "vmax": 45.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0630z.R0.nc4"
+    },
+    {
+      "variable": "O3",
+      "timestamp": "2026-11-12T06:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_O3_20261112_0630z.png",
+      "cmap": "viridis",
+      "vmin": 10.0,
+      "vmax": 50.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0630z.R0.nc4"
+    },
+    {
+      "variable": "CO",
+      "timestamp": "2026-11-12T06:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_CO_20261112_0630z.png",
+      "cmap": "cividis",
+      "vmin": 50.0,
+      "vmax": 600.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0630z.R0.nc4"
+    },
+    {
+      "variable": "SO2",
+      "timestamp": "2026-11-12T06:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_SO2_20261112_0630z.png",
+      "cmap": "plasma",
+      "vmin": 0.0,
+      "vmax": 25.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0630z.R0.nc4"
+    },
+    {
+      "variable": "PM25_RH35",
+      "timestamp": "2026-11-12T09:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_0930z.png",
+      "cmap": "inferno",
+      "vmin": 0.0,
+      "vmax": 150.0,
+      "displayUnit": "µg/m³",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0930z.R0.nc4"
+    },
+    {
+      "variable": "NO2",
+      "timestamp": "2026-11-12T09:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_NO2_20261112_0930z.png",
+      "cmap": "magma",
+      "vmin": 0.0,
+      "vmax": 45.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0930z.R0.nc4"
+    },
+    {
+      "variable": "O3",
+      "timestamp": "2026-11-12T09:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_O3_20261112_0930z.png",
+      "cmap": "viridis",
+      "vmin": 10.0,
+      "vmax": 50.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0930z.R0.nc4"
+    },
+    {
+      "variable": "CO",
+      "timestamp": "2026-11-12T09:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_CO_20261112_0930z.png",
+      "cmap": "cividis",
+      "vmin": 50.0,
+      "vmax": 600.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0930z.R0.nc4"
+    },
+    {
+      "variable": "SO2",
+      "timestamp": "2026-11-12T09:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_SO2_20261112_0930z.png",
+      "cmap": "plasma",
+      "vmin": 0.0,
+      "vmax": 25.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0930z.R0.nc4"
+    },
+    {
+      "variable": "PM25_RH35",
+      "timestamp": "2026-11-12T12:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_1230z.png",
+      "cmap": "inferno",
+      "vmin": 0.0,
+      "vmax": 150.0,
+      "displayUnit": "µg/m³",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1230z.R0.nc4"
+    },
+    {
+      "variable": "NO2",
+      "timestamp": "2026-11-12T12:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_NO2_20261112_1230z.png",
+      "cmap": "magma",
+      "vmin": 0.0,
+      "vmax": 45.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1230z.R0.nc4"
+    },
+    {
+      "variable": "O3",
+      "timestamp": "2026-11-12T12:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_O3_20261112_1230z.png",
+      "cmap": "viridis",
+      "vmin": 10.0,
+      "vmax": 50.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1230z.R0.nc4"
+    },
+    {
+      "variable": "CO",
+      "timestamp": "2026-11-12T12:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_CO_20261112_1230z.png",
+      "cmap": "cividis",
+      "vmin": 50.0,
+      "vmax": 600.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1230z.R0.nc4"
+    },
+    {
+      "variable": "SO2",
+      "timestamp": "2026-11-12T12:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_SO2_20261112_1230z.png",
+      "cmap": "plasma",
+      "vmin": 0.0,
+      "vmax": 25.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1230z.R0.nc4"
+    },
+    {
+      "variable": "PM25_RH35",
+      "timestamp": "2026-11-12T15:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_1530z.png",
+      "cmap": "inferno",
+      "vmin": 0.0,
+      "vmax": 150.0,
+      "displayUnit": "µg/m³",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1530z.R0.nc4"
+    },
+    {
+      "variable": "NO2",
+      "timestamp": "2026-11-12T15:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_NO2_20261112_1530z.png",
+      "cmap": "magma",
+      "vmin": 0.0,
+      "vmax": 45.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1530z.R0.nc4"
+    },
+    {
+      "variable": "O3",
+      "timestamp": "2026-11-12T15:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_O3_20261112_1530z.png",
+      "cmap": "viridis",
+      "vmin": 10.0,
+      "vmax": 50.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1530z.R0.nc4"
+    },
+    {
+      "variable": "CO",
+      "timestamp": "2026-11-12T15:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_CO_20261112_1530z.png",
+      "cmap": "cividis",
+      "vmin": 50.0,
+      "vmax": 600.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1530z.R0.nc4"
+    },
+    {
+      "variable": "SO2",
+      "timestamp": "2026-11-12T15:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_SO2_20261112_1530z.png",
+      "cmap": "plasma",
+      "vmin": 0.0,
+      "vmax": 25.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1530z.R0.nc4"
+    },
+    {
+      "variable": "PM25_RH35",
+      "timestamp": "2026-11-12T18:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_1830z.png",
+      "cmap": "inferno",
+      "vmin": 0.0,
+      "vmax": 150.0,
+      "displayUnit": "µg/m³",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1830z.R0.nc4"
+    },
+    {
+      "variable": "NO2",
+      "timestamp": "2026-11-12T18:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_NO2_20261112_1830z.png",
+      "cmap": "magma",
+      "vmin": 0.0,
+      "vmax": 45.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1830z.R0.nc4"
+    },
+    {
+      "variable": "O3",
+      "timestamp": "2026-11-12T18:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_O3_20261112_1830z.png",
+      "cmap": "viridis",
+      "vmin": 10.0,
+      "vmax": 50.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1830z.R0.nc4"
+    },
+    {
+      "variable": "CO",
+      "timestamp": "2026-11-12T18:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_CO_20261112_1830z.png",
+      "cmap": "cividis",
+      "vmin": 50.0,
+      "vmax": 600.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1830z.R0.nc4"
+    },
+    {
+      "variable": "SO2",
+      "timestamp": "2026-11-12T18:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_SO2_20261112_1830z.png",
+      "cmap": "plasma",
+      "vmin": 0.0,
+      "vmax": 25.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1830z.R0.nc4"
+    },
+    {
+      "variable": "PM25_RH35",
+      "timestamp": "2026-11-12T21:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_2130z.png",
+      "cmap": "inferno",
+      "vmin": 0.0,
+      "vmax": 150.0,
+      "displayUnit": "µg/m³",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_2130z.R0.nc4"
+    },
+    {
+      "variable": "NO2",
+      "timestamp": "2026-11-12T21:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_NO2_20261112_2130z.png",
+      "cmap": "magma",
+      "vmin": 0.0,
+      "vmax": 45.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_2130z.R0.nc4"
+    },
+    {
+      "variable": "O3",
+      "timestamp": "2026-11-12T21:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_O3_20261112_2130z.png",
+      "cmap": "viridis",
+      "vmin": 10.0,
+      "vmax": 50.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_2130z.R0.nc4"
+    },
+    {
+      "variable": "CO",
+      "timestamp": "2026-11-12T21:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_CO_20261112_2130z.png",
+      "cmap": "cividis",
+      "vmin": 50.0,
+      "vmax": 600.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_2130z.R0.nc4"
+    },
+    {
+      "variable": "SO2",
+      "timestamp": "2026-11-12T21:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_SO2_20261112_2130z.png",
+      "cmap": "plasma",
+      "vmin": 0.0,
+      "vmax": 25.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_2130z.R0.nc4"
+    }
+  ]
+}

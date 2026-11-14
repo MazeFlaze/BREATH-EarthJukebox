@@ -6,6 +6,7 @@ from .observation_schema import (
     DatasetSchema,
 )
 from .jukebox_schema import (
+    NormalizationMethodType,
     CoordinatePair,
     LocationInput,
     SpatialJukeboxRequest,
@@ -13,6 +14,11 @@ from .jukebox_schema import (
     ProvenanceMeta,
     JukeboxPoint,
     JukeboxResponse,
+    BoundingBoxInput,
+    RegionJukeboxRequest,
+    RegionTierRatios,
+    RegionSummaryMetrics,
+    RegionJukeboxResponse,
 )
 from .dataset_metadata_schema import (
     VariableMeta,
@@ -27,6 +33,7 @@ __all__ = [
     "ObservationSchema",
     "DatasetRangeSchema",
     "DatasetSchema",
+    "NormalizationMethodType",
     "CoordinatePair",
     "LocationInput",
     "SpatialJukeboxRequest",
@@ -34,6 +41,11 @@ __all__ = [
     "ProvenanceMeta",
     "JukeboxPoint",
     "JukeboxResponse",
+    "BoundingBoxInput",
+    "RegionJukeboxRequest",
+    "RegionTierRatios",
+    "RegionSummaryMetrics",
+    "RegionJukeboxResponse",
     "VariableMeta",
     "DatasetSummary",
     "DatasetAvailability",

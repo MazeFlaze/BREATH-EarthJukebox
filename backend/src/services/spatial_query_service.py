@@ -22,6 +22,12 @@ from ..providers.geos_cf import GEOSCFProvider
 from ..repositories.dataset_repository import DatasetRepository
 from ..repositories.observation_repository import ObservationRepository
 from ..utils.logger import logger
+from .jukebox_helpers import (
+    build_normalization_meta,
+    build_provenance_meta,
+    normalize_and_convert,
+    validate_dataset_and_variable,
+)
 
 
 class SpatialQueryService:
@@ -34,20 +40,7 @@ class SpatialQueryService:
         self.provider = provider or GEOSCFProvider(raw_storage_dir=settings.DATA_STORAGE_ROOT)
 
     def execute_spatial_query(self, request: SpatialJukeboxRequest, db: Session) -> JukeboxResponse:
-        # Validate dataset
-        if request.datasetId != self.provider.DATASET_ID:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Dataset '{request.datasetId}' not supported. Available: ['{self.provider.DATASET_ID}']",
-            )
-
-        # Validate variable
-        variables_catalog = self.provider.list_variables()
-        if request.variable not in variables_catalog:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Variable '{request.variable}' not found. Supported variables: {list(variables_catalog.keys())}",
-            )
+        var_info = validate_dataset_and_variable(self.provider, request.datasetId, request.variable)
 
         # Parse and validate timestamp
         try:
@@ -64,6 +57,7 @@ class SpatialQueryService:
                 "timestamp": iso_time,
                 "variable": request.variable,
                 "locations": [{"id": l.id, "lat": l.lat, "lon": l.lon} for l in request.locations],
+                "normalizationMethod": request.normalizationMethod,
             },
         )
         cached_result = app_cache.get(cache_key)
@@ -71,26 +65,12 @@ class SpatialQueryService:
             logger.info(f"Cache hit for spatial query [{request.variable} at {iso_time}]")
             return JukeboxResponse(**cached_result)
 
-        var_info = variables_catalog[request.variable]
-        norm_cfg = ObservationNormalizer.get_config(request.variable)
-        norm_meta = (
-            NormalizationMeta(
-                method=norm_cfg.method,
-                min=norm_cfg.min,
-                max=norm_cfg.max,
-                configVersion=norm_cfg.configVersion,
-            )
-            if norm_cfg
-            else None
-        )
+        norm_meta = build_normalization_meta(request.variable, request.normalizationMethod)
         meta = self.provider.get_source_metadata()
-        provenance = ProvenanceMeta(
-            provider=meta["provider"],
-            sourceUrl=meta["sourceUrl"],
-            productVersion=meta["productVersion"],
-            spatialResolution=meta.get("spatialResolution"),
-            temporalResolution=meta.get("temporalResolution"),
-        )
+        provenance = build_provenance_meta(self.provider)
+        resolved_display_unit = ObservationNormalizer.to_display_unit(
+            request.variable, None, raw_unit=var_info["unit"]
+        ).display_unit
 
         # Step 1: Read-Through Database Lookup
         # Check if all requested locations already exist in observation_samples
@@ -118,7 +98,10 @@ class SpatialQueryService:
             for idx, loc in enumerate(request.locations):
                 sample = db_points_map[idx]
                 val = sample.value
-                norm_val = ObservationNormalizer.normalize(request.variable, val)
+                norm_val, disp_val, disp_unit = normalize_and_convert(
+                    request.variable, val, request.normalizationMethod, sample.unit or var_info["unit"]
+                )
+                resolved_display_unit = disp_unit
                 points.append(
                     JukeboxPoint(
                         order=idx,
@@ -128,6 +111,8 @@ class SpatialQueryService:
                         gridCoordinates=CoordinatePair(lat=sample.grid_latitude, lon=sample.grid_longitude),
                         value=val,
                         normalizedValue=norm_val,
+                        displayValue=disp_val,
+                        displayUnit=disp_unit,
                         quality=sample.quality_status,
                     )
                 )
@@ -137,6 +122,7 @@ class SpatialQueryService:
                 datasetId=request.datasetId,
                 variable=request.variable,
                 unit=var_info["unit"],
+                displayUnit=resolved_display_unit,
                 dataType=meta["dataType"],
                 isMock=False,
                 normalization=norm_meta,
@@ -237,7 +223,10 @@ class SpatialQueryService:
         points: List[JukeboxPoint] = []
         for p in raw_points:
             val = p["value"]
-            norm_val = ObservationNormalizer.normalize(request.variable, val)
+            norm_val, disp_val, disp_unit = normalize_and_convert(
+                request.variable, val, request.normalizationMethod, var_info["unit"]
+            )
+            resolved_display_unit = disp_unit
             grid_lat = p["grid_coordinates"]["lat"]
             grid_lon = p["grid_coordinates"]["lon"]
 
@@ -266,24 +255,18 @@ class SpatialQueryService:
                 gridCoordinates=CoordinatePair(**p["grid_coordinates"]),
                 value=val,
                 normalizedValue=norm_val,
+                displayValue=disp_val,
+                displayUnit=disp_unit,
                 quality=p["quality"],
             )
             points.append(pt)
-
-        meta = self.provider.get_source_metadata()
-        provenance = ProvenanceMeta(
-            provider=meta["provider"],
-            sourceUrl=meta["sourceUrl"],
-            productVersion=meta["productVersion"],
-            spatialResolution=meta.get("spatialResolution"),
-            temporalResolution=meta.get("temporalResolution"),
-        )
 
         response = JukeboxResponse(
             mode="spatial",
             datasetId=request.datasetId,
             variable=request.variable,
             unit=var_info["unit"],
+            displayUnit=resolved_display_unit,
             dataType=meta["dataType"],
             isMock=False,
             normalization=norm_meta,

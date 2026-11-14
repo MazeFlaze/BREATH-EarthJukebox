@@ -1,5 +1,7 @@
 from typing import List, Optional, Literal
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+NormalizationMethodType = Literal["fixed_reference_range", "log_scale", "quantile_linear", "calibrated"]
 
 
 class CoordinatePair(BaseModel):
@@ -31,14 +33,22 @@ class SpatialJukeboxRequest(BaseModel):
     timestamp: str = Field(..., description="ISO 8601 UTC timestamp (e.g. '2026-11-13T01:30:00Z')")
     variable: str = Field(..., description="Atmospheric variable to sonify (e.g. 'PM25_RH35')")
     locations: List[LocationInput] = Field(..., min_length=1, max_length=100, description="Ordered locations sequence")
+    normalizationMethod: NormalizationMethodType = Field(
+        "fixed_reference_range",
+        description="Normalization strategy ('fixed_reference_range' default or 'log_scale'/'calibrated')",
+    )
 
 
 class NormalizationMeta(BaseModel):
     """Audio normalization reference bounds and version."""
-    method: str = Field(..., description="Normalization strategy (e.g. 'fixed_reference_range')")
-    min: float = Field(..., description="Reference minimum physical bound")
-    max: float = Field(..., description="Reference maximum physical bound")
+    method: str = Field(..., description="Normalization strategy (e.g. 'fixed_reference_range' or 'log_scale')")
+    min: float = Field(..., description="Reference minimum physical bound (or p01 for calibrated modes)")
+    max: float = Field(..., description="Reference maximum physical bound (or p99 for calibrated modes)")
     configVersion: str = Field(..., description="Version of normalization mapping table")
+    p01: Optional[float] = Field(None, description="Empirical P01 anchor when calibrated")
+    p50: Optional[float] = Field(None, description="Empirical P50 median scale anchor when calibrated")
+    p99: Optional[float] = Field(None, description="Empirical P99 anchor when calibrated")
+    displayUnit: Optional[str] = Field(None, description="Human-readable display unit (e.g. 'ppbv', 'µg/m³')")
 
 
 class ProvenanceMeta(BaseModel):
@@ -59,6 +69,8 @@ class JukeboxPoint(BaseModel):
     gridCoordinates: CoordinatePair = Field(..., description="Resolved nearest scientific model grid coordinates")
     value: Optional[float] = Field(None, description="Raw physical measurement value, null if missing")
     normalizedValue: Optional[float] = Field(None, description="Normalized [0.0, 1.0] audio frequency control signal")
+    displayValue: Optional[float] = Field(None, description="Human-readable converted value (e.g. ppbv for trace gases)")
+    displayUnit: Optional[str] = Field(None, description="Human-readable display unit")
     quality: str = Field("valid", description="Quality flag: 'valid', 'missing', or 'uncalibrated'")
 
 
@@ -70,9 +82,85 @@ class JukeboxResponse(BaseModel):
     mode: Literal["spatial", "temporal"] = Field(..., description="Jukebox playback mode")
     datasetId: str = Field(..., description="Dataset identifier")
     variable: str = Field(..., description="Scientific atmospheric variable")
-    unit: str = Field(..., description="Physical measurement unit")
+    unit: str = Field(..., description="Native physical measurement unit")
+    displayUnit: Optional[str] = Field(None, description="Human-readable display unit (e.g. 'ppbv', 'µg/m³')")
     dataType: str = Field(..., description="Scientific classification (e.g. 'model_analysis', 'satellite_observation')")
     isMock: bool = Field(False, description="Flag indicating whether data is synthetic prototype data")
     normalization: Optional[NormalizationMeta] = Field(None, description="Audio normalization bounds if calibrated")
     points: List[JukeboxPoint] = Field(..., description="Ordered playlist observation sequence")
     provenance: ProvenanceMeta = Field(..., description="Scientific provenance attribution")
+
+
+class BoundingBoxInput(BaseModel):
+    """Geographic rectangular bounding box selected via map drag-and-drop ROI tool."""
+    latMin: float = Field(..., ge=-90.0, le=90.0, description="Southern latitude bound")
+    latMax: float = Field(..., ge=-90.0, le=90.0, description="Northern latitude bound")
+    lonMin: float = Field(..., ge=-360.0, le=360.0, description="Western longitude bound")
+    lonMax: float = Field(..., ge=-360.0, le=360.0, description="Eastern longitude bound")
+
+    @model_validator(mode="after")
+    def validate_lat_order(self) -> "BoundingBoxInput":
+        if self.latMin > self.latMax:
+            raise ValueError(f"latMin ({self.latMin}) must be <= latMax ({self.latMax}).")
+        return self
+
+
+class RegionJukeboxRequest(BaseModel):
+    """Request payload for Single-ROI drag-box spatial aggregation and sonification."""
+    datasetId: str = Field("geos-cf-v2-aqc", description="Target dataset identifier")
+    timestamp: str = Field(..., description="ISO 8601 UTC timestamp")
+    variable: str = Field("PM25_RH35", description="Atmospheric variable to aggregate")
+    bounds: Optional[BoundingBoxInput] = Field(None, description="Explicit drag-box bounds")
+    center: Optional[CoordinatePair] = Field(None, description="Optional ROI center when bounds omitted")
+    deltaDeg: float = Field(0.5, gt=0.0, le=30.0, description="Half-width in degrees when center is used")
+    normalizationMethod: NormalizationMethodType = Field(
+        "log_scale",
+        description="Normalization strategy (defaults to EDA-calibrated 'log_scale' for perceptual audio)",
+    )
+
+    @model_validator(mode="after")
+    def validate_bounds_or_center(self) -> "RegionJukeboxRequest":
+        if self.bounds is None and self.center is None:
+            raise ValueError("Either 'bounds' or 'center' must be provided for ROI query.")
+        return self
+
+
+class RegionTierRatios(BaseModel):
+    """Within-ROI air quality concentration tier proportions summing to 1.0 when valid cells > 0."""
+    low: float
+    moderate: float
+    high: float
+
+
+class RegionSummaryMetrics(BaseModel):
+    """Spatial aggregation summary with native units, ppbv display units, and acoustic [0, 1] scores."""
+    mean: Optional[float] = None
+    p90: Optional[float] = None
+    max: Optional[float] = None
+    displayMean: Optional[float] = None
+    displayP90: Optional[float] = None
+    displayMax: Optional[float] = None
+    normalizedMean: Optional[float] = None
+    normalizedP90: Optional[float] = None
+    normalizedMax: Optional[float] = None
+    validCount: int
+    missingCount: int
+    totalCount: int
+    snappedToNearest: bool = False
+    tierRatios: RegionTierRatios
+
+
+class RegionJukeboxResponse(BaseModel):
+    """Response payload for Single-ROI drag-box spatial aggregation and sonification."""
+    mode: Literal["region"] = "region"
+    datasetId: str
+    variable: str
+    timestamp: str
+    unit: str
+    displayUnit: str
+    dataType: str
+    isMock: bool = False
+    bounds: BoundingBoxInput
+    normalization: Optional[NormalizationMeta] = None
+    summary: RegionSummaryMetrics
+    provenance: ProvenanceMeta

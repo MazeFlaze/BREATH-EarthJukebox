@@ -68,7 +68,8 @@ def setup_test_environment():
         service = IngestionService()
         try:
             service.ingest_local_file(sample_file, db=db)
-        except Exception:
-            pass
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Test fixture sample ingest failed: %s", exc)
 
     yield
