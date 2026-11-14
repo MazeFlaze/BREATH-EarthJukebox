@@ -104,7 +104,7 @@ export default function LandingPage() {
           />
 
           {/* Navigation inside Left Panel */}
-          <header className="relative z-10 flex items-center justify-between gap-4 -mt-1 sm:-mt-2 -mr-3 sm:-mr-4 lg:-mr-5">
+          <header className="relative z-10 flex items-center justify-between gap-4 -mt-1 sm:-mt-2">
             <Link
               href="/"
               className="flex items-center gap-3 hover:scale-105 active:scale-95 transition-transform shrink-0"
@@ -114,40 +114,6 @@ export default function LandingPage() {
                 BREATHE
               </span>
             </Link>
-
-            {/* Top Bar - Extended horizontal width */}
-            <nav
-              aria-label="Quick Navigation"
-              className="liquid-glass rounded-xl sm:rounded-2xl px-6 sm:px-10 py-2 sm:py-2.5 flex items-center justify-between gap-6 sm:gap-10 min-w-[280px] sm:min-w-[360px] border border-white/15 shadow-[inset_0_1px_2px_rgba(255,255,255,0.25),0_6px_25px_rgba(0,0,0,0.5)] backdrop-blur-2xl bg-white/[0.06] shrink-0"
-            >
-              {/* Experience Button */}
-              <button
-                type="button"
-                onClick={() => setActiveModal('experience')}
-                className="px-5 py-1.5 rounded-lg text-sm sm:text-base font-medium text-white/90 hover:text-white hover:bg-white/15 transition-all cursor-pointer whitespace-nowrap text-center"
-              >
-                Experience
-              </button>
-
-              {/* About Button */}
-              <button
-                type="button"
-                onClick={() => setActiveModal('about')}
-                className="px-5 py-1.5 rounded-lg text-sm sm:text-base font-medium text-white/90 hover:text-white hover:bg-white/15 transition-all cursor-pointer whitespace-nowrap text-center"
-              >
-                About
-              </button>
-
-              {/* Menu Hamburger Button */}
-              <button
-                type="button"
-                onClick={() => setActiveModal('menu')}
-                aria-label="Open navigation menu"
-                className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center text-white/80 hover:text-white hover:bg-white/15 transition-all cursor-pointer shrink-0"
-              >
-                <Menu className="w-5 h-5 text-white" />
-              </button>
-            </nav>
           </header>
 
           {/* Centered Hero */}
@@ -254,7 +220,40 @@ export default function LandingPage() {
         </section>
 
         {/* Right Panel */}
-        <aside className="hidden lg:flex min-h-[100svh] flex-col justify-start p-10 lg:p-12 w-[48%]">
+        <aside className="hidden lg:flex min-h-[100svh] flex-col justify-start items-end p-8 sm:p-10 lg:p-12 w-[48%]">
+          {/* Top Bar - Placed at the right edge of screen */}
+          <nav
+            aria-label="Quick Navigation"
+            className="liquid-glass rounded-xl sm:rounded-2xl px-6 sm:px-10 py-2 sm:py-2.5 flex items-center justify-between gap-6 sm:gap-10 min-w-[280px] sm:min-w-[360px] border border-white/15 shadow-[inset_0_1px_2px_rgba(255,255,255,0.25),0_6px_25px_rgba(0,0,0,0.5)] backdrop-blur-2xl bg-white/[0.06] shrink-0"
+          >
+            {/* Experience Button */}
+            <button
+              type="button"
+              onClick={() => setActiveModal('experience')}
+              className="px-5 py-1.5 rounded-lg text-sm sm:text-base font-medium text-white/90 hover:text-white hover:bg-white/15 transition-all cursor-pointer whitespace-nowrap text-center"
+            >
+              Experience
+            </button>
+
+            {/* About Button */}
+            <button
+              type="button"
+              onClick={() => setActiveModal('about')}
+              className="px-5 py-1.5 rounded-lg text-sm sm:text-base font-medium text-white/90 hover:text-white hover:bg-white/15 transition-all cursor-pointer whitespace-nowrap text-center"
+            >
+              About
+            </button>
+
+            {/* Menu Hamburger Button */}
+            <button
+              type="button"
+              onClick={() => setActiveModal('menu')}
+              aria-label="Open navigation menu"
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center text-white/80 hover:text-white hover:bg-white/15 transition-all cursor-pointer shrink-0"
+            >
+              <Menu className="w-5 h-5 text-white" />
+            </button>
+          </nav>
         </aside>
       </main>
 
