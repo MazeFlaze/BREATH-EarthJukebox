@@ -55,6 +55,12 @@ export const Header: React.FC<HeaderProps> = ({ isMockData = true }) => {
 
           {/* Quick Links */}
           <nav className="hidden md:flex items-center gap-4 text-xs font-medium text-slate-300">
+            <a
+              href="/landing"
+              className="rounded-full bg-cyan-500/10 px-3 py-1 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/20 transition-all font-semibold"
+            >
+              ✨ Landing Page
+            </a>
             <a href="#visualization" className="hover:text-cyan-400 transition-colors">
               Visualization
             </a>
