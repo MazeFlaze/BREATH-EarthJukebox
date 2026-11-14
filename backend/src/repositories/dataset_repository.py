@@ -12,6 +12,10 @@ class DatasetRepository:
         return db.query(DatasetSource).filter(DatasetSource.id == source_id).first()
 
     @staticmethod
+    def get_asset(db: Session, asset_id: str) -> Optional[DatasetAsset]:
+        return db.query(DatasetAsset).filter(DatasetAsset.id == asset_id).first()
+
+    @staticmethod
     def list_sources(db: Session) -> List[DatasetSource]:
         return db.query(DatasetSource).order_by(DatasetSource.id).all()
 
