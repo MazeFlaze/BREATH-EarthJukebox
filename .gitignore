@@ -94,3 +94,23 @@ frontend/tsconfig.tsbuildinfo
 *.sqlite3
 backend/src/data/raw/*
 !backend/src/data/raw/.gitkeep
+
+# SQLite WAL/Journal sidecar files
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Additional NASA Earth Observation binaries & partial downloads
+*.hdf
+*.he5
+*.h5
+*.part
+*.tmp
+
+# Python linter/typecheck caches & general logs
+.mypy_cache/
+.ruff_cache/
+*.log
+logs/
