@@ -29,7 +29,7 @@ class DataService {
    * Prevents repeated checks during the same initialization cycle.
    */
   public async getDataset(): Promise<Dataset> {
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL;
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL;
 
     // Return in-flight fetch promise if an initialization request is already pending
     if (this.pendingFetchPromise) {
@@ -39,9 +39,16 @@ class DataService {
     if (backendUrl && !this.backendChecked && typeof window !== "undefined") {
       this.pendingFetchPromise = (async () => {
         try {
-          const response = await fetch(`${backendUrl}/api/v1/observations/aod`, {
+          // Query primary SVS 5533 Air Quality endpoint, fallback to AOD
+          let response = await fetch(`${backendUrl}/api/v1/observations/air-quality`, {
             headers: { Accept: "application/json" },
           });
+
+          if (!response.ok) {
+            response = await fetch(`${backendUrl}/api/v1/observations/aod`, {
+              headers: { Accept: "application/json" },
+            });
+          }
 
           if (response.ok) {
             const remoteData = (await response.json()) as Dataset;
