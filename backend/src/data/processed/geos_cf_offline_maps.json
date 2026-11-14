@@ -1,0 +1,917 @@
+{
+  "_meta": {
+    "notice": "VERIFIED NASA GEOS-CF v2 OFFLINE M4 DATASET",
+    "disclaimer": "Values extracted directly from authentic NASA GMAO GEOS-CF v2 NetCDF-4 granules and paired with local SVS 5533-styled 1920x1080 equirectangular PNGs. PM2.5 (µg/m³) is strictly distinct from dimensionless AOD.",
+    "isMock": false,
+    "targetVariable": "Surface Particulate Matter (PM2.5)",
+    "unit": "µg/m³",
+    "version": "2.0.0-offline-m4-calibrated",
+    "generatedAt": "2026-11-14T15:58:26Z"
+  },
+  "dataset": {
+    "id": "geos-cf-v2-aqc",
+    "title": "NASA GMAO GEOS-CF v2: Global Surface Air Quality (Offline M4 Ready)",
+    "source": "NASA GMAO & NASA Scientific Visualization Studio (#5533)",
+    "sourceUrl": "https://portal.nccs.nasa.gov/datashare/gmao/geos-cf/v2/ana/",
+    "variable": "Particulate Matter (PM2.5)",
+    "unit": "µg/m³",
+    "description": "Offline-ready GEOS-CF v2 PM2.5 observations paired with 16:9 equirectangular heatmap assets for browser drag-box ROI selection and log-scale sonification.",
+    "observations": [
+      {
+        "id": "geos-cf-20261112-0030-hanoi",
+        "timestamp": "2026-11-12T00:30:00Z",
+        "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_0030z.png",
+        "value": 119.686,
+        "unit": "µg/m³",
+        "variable": "Particulate Matter (PM2.5)",
+        "description": "GEOS-CF v2 hourly surface PM2.5 assimilation at Hanoi (Southeast Asia); calibrated acoustic index=1.0.",
+        "isMock": false,
+        "coordinates": {
+          "lat": 21.0,
+          "lon": 105.75,
+          "regionName": "Hanoi (Southeast Asia)"
+        },
+        "provenance": {
+          "satellite": "NASA GMAO GEOS-CF v2 Assimilation (MODIS / VIIRS / OMI)",
+          "instrument": "GEOS-CF Chemistry & Aerosol Model",
+          "processingLevel": "Level 4 Global 2D Surface Analysis (Offline M4 Render)",
+          "citationUrl": "https://portal.nccs.nasa.gov/datashare/gmao/geos-cf/v2/ana/"
+        }
+      },
+      {
+        "id": "geos-cf-20261112-0330-bangkok",
+        "timestamp": "2026-11-12T03:30:00Z",
+        "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_0330z.png",
+        "value": 90.755,
+        "unit": "µg/m³",
+        "variable": "Particulate Matter (PM2.5)",
+        "description": "GEOS-CF v2 hourly surface PM2.5 assimilation at Bangkok (Southeast Asia); calibrated acoustic index=1.0.",
+        "isMock": false,
+        "coordinates": {
+          "lat": 13.75,
+          "lon": 100.5,
+          "regionName": "Bangkok (Southeast Asia)"
+        },
+        "provenance": {
+          "satellite": "NASA GMAO GEOS-CF v2 Assimilation (MODIS / VIIRS / OMI)",
+          "instrument": "GEOS-CF Chemistry & Aerosol Model",
+          "processingLevel": "Level 4 Global 2D Surface Analysis (Offline M4 Render)",
+          "citationUrl": "https://portal.nccs.nasa.gov/datashare/gmao/geos-cf/v2/ana/"
+        }
+      },
+      {
+        "id": "geos-cf-20261112-0630-singapore",
+        "timestamp": "2026-11-12T06:30:00Z",
+        "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_0630z.png",
+        "value": 37.166,
+        "unit": "µg/m³",
+        "variable": "Particulate Matter (PM2.5)",
+        "description": "GEOS-CF v2 hourly surface PM2.5 assimilation at Singapore (Southeast Asia); calibrated acoustic index=0.7804.",
+        "isMock": false,
+        "coordinates": {
+          "lat": 1.25,
+          "lon": 103.75,
+          "regionName": "Singapore (Southeast Asia)"
+        },
+        "provenance": {
+          "satellite": "NASA GMAO GEOS-CF v2 Assimilation (MODIS / VIIRS / OMI)",
+          "instrument": "GEOS-CF Chemistry & Aerosol Model",
+          "processingLevel": "Level 4 Global 2D Surface Analysis (Offline M4 Render)",
+          "citationUrl": "https://portal.nccs.nasa.gov/datashare/gmao/geos-cf/v2/ana/"
+        }
+      },
+      {
+        "id": "geos-cf-20261112-0930-tokyo",
+        "timestamp": "2026-11-12T09:30:00Z",
+        "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_0930z.png",
+        "value": 50.885,
+        "unit": "µg/m³",
+        "variable": "Particulate Matter (PM2.5)",
+        "description": "GEOS-CF v2 hourly surface PM2.5 assimilation at Tokyo (East Asia); calibrated acoustic index=0.887.",
+        "isMock": false,
+        "coordinates": {
+          "lat": 35.75,
+          "lon": 139.75,
+          "regionName": "Tokyo (East Asia)"
+        },
+        "provenance": {
+          "satellite": "NASA GMAO GEOS-CF v2 Assimilation (MODIS / VIIRS / OMI)",
+          "instrument": "GEOS-CF Chemistry & Aerosol Model",
+          "processingLevel": "Level 4 Global 2D Surface Analysis (Offline M4 Render)",
+          "citationUrl": "https://portal.nccs.nasa.gov/datashare/gmao/geos-cf/v2/ana/"
+        }
+      },
+      {
+        "id": "geos-cf-20261112-1230-new_york",
+        "timestamp": "2026-11-12T12:30:00Z",
+        "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_1230z.png",
+        "value": 40.058,
+        "unit": "µg/m³",
+        "variable": "Particulate Matter (PM2.5)",
+        "description": "GEOS-CF v2 hourly surface PM2.5 assimilation at New York City (North America); calibrated acoustic index=0.8059.",
+        "isMock": false,
+        "coordinates": {
+          "lat": 40.75,
+          "lon": -74.0,
+          "regionName": "New York City (North America)"
+        },
+        "provenance": {
+          "satellite": "NASA GMAO GEOS-CF v2 Assimilation (MODIS / VIIRS / OMI)",
+          "instrument": "GEOS-CF Chemistry & Aerosol Model",
+          "processingLevel": "Level 4 Global 2D Surface Analysis (Offline M4 Render)",
+          "citationUrl": "https://portal.nccs.nasa.gov/datashare/gmao/geos-cf/v2/ana/"
+        }
+      },
+      {
+        "id": "geos-cf-20261112-1530-london",
+        "timestamp": "2026-11-12T15:30:00Z",
+        "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_1530z.png",
+        "value": 42.726,
+        "unit": "µg/m³",
+        "variable": "Particulate Matter (PM2.5)",
+        "description": "GEOS-CF v2 hourly surface PM2.5 assimilation at London (Europe); calibrated acoustic index=0.8278.",
+        "isMock": false,
+        "coordinates": {
+          "lat": 51.5,
+          "lon": -0.25,
+          "regionName": "London (Europe)"
+        },
+        "provenance": {
+          "satellite": "NASA GMAO GEOS-CF v2 Assimilation (MODIS / VIIRS / OMI)",
+          "instrument": "GEOS-CF Chemistry & Aerosol Model",
+          "processingLevel": "Level 4 Global 2D Surface Analysis (Offline M4 Render)",
+          "citationUrl": "https://portal.nccs.nasa.gov/datashare/gmao/geos-cf/v2/ana/"
+        }
+      },
+      {
+        "id": "geos-cf-20261112-1830-paris",
+        "timestamp": "2026-11-12T18:30:00Z",
+        "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_1830z.png",
+        "value": 36.765,
+        "unit": "µg/m³",
+        "variable": "Particulate Matter (PM2.5)",
+        "description": "GEOS-CF v2 hourly surface PM2.5 assimilation at Paris (Europe); calibrated acoustic index=0.7767.",
+        "isMock": false,
+        "coordinates": {
+          "lat": 48.75,
+          "lon": 2.25,
+          "regionName": "Paris (Europe)"
+        },
+        "provenance": {
+          "satellite": "NASA GMAO GEOS-CF v2 Assimilation (MODIS / VIIRS / OMI)",
+          "instrument": "GEOS-CF Chemistry & Aerosol Model",
+          "processingLevel": "Level 4 Global 2D Surface Analysis (Offline M4 Render)",
+          "citationUrl": "https://portal.nccs.nasa.gov/datashare/gmao/geos-cf/v2/ana/"
+        }
+      },
+      {
+        "id": "geos-cf-20261112-2130-sydney",
+        "timestamp": "2026-11-12T21:30:00Z",
+        "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_2130z.png",
+        "value": 24.806,
+        "unit": "µg/m³",
+        "variable": "Particulate Matter (PM2.5)",
+        "description": "GEOS-CF v2 hourly surface PM2.5 assimilation at Sydney (Oceania); calibrated acoustic index=0.6426.",
+        "isMock": false,
+        "coordinates": {
+          "lat": -33.75,
+          "lon": 151.25,
+          "regionName": "Sydney (Oceania)"
+        },
+        "provenance": {
+          "satellite": "NASA GMAO GEOS-CF v2 Assimilation (MODIS / VIIRS / OMI)",
+          "instrument": "GEOS-CF Chemistry & Aerosol Model",
+          "processingLevel": "Level 4 Global 2D Surface Analysis (Offline M4 Render)",
+          "citationUrl": "https://portal.nccs.nasa.gov/datashare/gmao/geos-cf/v2/ana/"
+        }
+      }
+    ],
+    "isMock": false,
+    "range": {
+      "min": 24.806,
+      "max": 119.686
+    }
+  },
+  "maps": [
+    {
+      "variable": "PM25_RH35",
+      "timestamp": "2026-11-12T00:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_0030z.png",
+      "cmap": "inferno",
+      "vmin": 0.0,
+      "vmax": 150.0,
+      "displayUnit": "µg/m³",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0030z.R0.nc4"
+    },
+    {
+      "variable": "NO2",
+      "timestamp": "2026-11-12T00:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_NO2_20261112_0030z.png",
+      "cmap": "magma",
+      "vmin": 0.0,
+      "vmax": 45.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0030z.R0.nc4"
+    },
+    {
+      "variable": "O3",
+      "timestamp": "2026-11-12T00:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_O3_20261112_0030z.png",
+      "cmap": "viridis",
+      "vmin": 10.0,
+      "vmax": 50.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0030z.R0.nc4"
+    },
+    {
+      "variable": "CO",
+      "timestamp": "2026-11-12T00:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_CO_20261112_0030z.png",
+      "cmap": "cividis",
+      "vmin": 50.0,
+      "vmax": 600.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0030z.R0.nc4"
+    },
+    {
+      "variable": "SO2",
+      "timestamp": "2026-11-12T00:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_SO2_20261112_0030z.png",
+      "cmap": "plasma",
+      "vmin": 0.0,
+      "vmax": 25.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0030z.R0.nc4"
+    },
+    {
+      "variable": "PM25_RH35",
+      "timestamp": "2026-11-12T03:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_0330z.png",
+      "cmap": "inferno",
+      "vmin": 0.0,
+      "vmax": 150.0,
+      "displayUnit": "µg/m³",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0330z.R0.nc4"
+    },
+    {
+      "variable": "NO2",
+      "timestamp": "2026-11-12T03:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_NO2_20261112_0330z.png",
+      "cmap": "magma",
+      "vmin": 0.0,
+      "vmax": 45.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0330z.R0.nc4"
+    },
+    {
+      "variable": "O3",
+      "timestamp": "2026-11-12T03:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_O3_20261112_0330z.png",
+      "cmap": "viridis",
+      "vmin": 10.0,
+      "vmax": 50.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0330z.R0.nc4"
+    },
+    {
+      "variable": "CO",
+      "timestamp": "2026-11-12T03:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_CO_20261112_0330z.png",
+      "cmap": "cividis",
+      "vmin": 50.0,
+      "vmax": 600.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0330z.R0.nc4"
+    },
+    {
+      "variable": "SO2",
+      "timestamp": "2026-11-12T03:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_SO2_20261112_0330z.png",
+      "cmap": "plasma",
+      "vmin": 0.0,
+      "vmax": 25.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0330z.R0.nc4"
+    },
+    {
+      "variable": "PM25_RH35",
+      "timestamp": "2026-11-12T06:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_0630z.png",
+      "cmap": "inferno",
+      "vmin": 0.0,
+      "vmax": 150.0,
+      "displayUnit": "µg/m³",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0630z.R0.nc4"
+    },
+    {
+      "variable": "NO2",
+      "timestamp": "2026-11-12T06:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_NO2_20261112_0630z.png",
+      "cmap": "magma",
+      "vmin": 0.0,
+      "vmax": 45.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0630z.R0.nc4"
+    },
+    {
+      "variable": "O3",
+      "timestamp": "2026-11-12T06:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_O3_20261112_0630z.png",
+      "cmap": "viridis",
+      "vmin": 10.0,
+      "vmax": 50.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0630z.R0.nc4"
+    },
+    {
+      "variable": "CO",
+      "timestamp": "2026-11-12T06:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_CO_20261112_0630z.png",
+      "cmap": "cividis",
+      "vmin": 50.0,
+      "vmax": 600.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0630z.R0.nc4"
+    },
+    {
+      "variable": "SO2",
+      "timestamp": "2026-11-12T06:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_SO2_20261112_0630z.png",
+      "cmap": "plasma",
+      "vmin": 0.0,
+      "vmax": 25.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0630z.R0.nc4"
+    },
+    {
+      "variable": "PM25_RH35",
+      "timestamp": "2026-11-12T09:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_0930z.png",
+      "cmap": "inferno",
+      "vmin": 0.0,
+      "vmax": 150.0,
+      "displayUnit": "µg/m³",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0930z.R0.nc4"
+    },
+    {
+      "variable": "NO2",
+      "timestamp": "2026-11-12T09:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_NO2_20261112_0930z.png",
+      "cmap": "magma",
+      "vmin": 0.0,
+      "vmax": 45.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0930z.R0.nc4"
+    },
+    {
+      "variable": "O3",
+      "timestamp": "2026-11-12T09:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_O3_20261112_0930z.png",
+      "cmap": "viridis",
+      "vmin": 10.0,
+      "vmax": 50.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0930z.R0.nc4"
+    },
+    {
+      "variable": "CO",
+      "timestamp": "2026-11-12T09:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_CO_20261112_0930z.png",
+      "cmap": "cividis",
+      "vmin": 50.0,
+      "vmax": 600.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0930z.R0.nc4"
+    },
+    {
+      "variable": "SO2",
+      "timestamp": "2026-11-12T09:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_SO2_20261112_0930z.png",
+      "cmap": "plasma",
+      "vmin": 0.0,
+      "vmax": 25.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0930z.R0.nc4"
+    },
+    {
+      "variable": "PM25_RH35",
+      "timestamp": "2026-11-12T12:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_1230z.png",
+      "cmap": "inferno",
+      "vmin": 0.0,
+      "vmax": 150.0,
+      "displayUnit": "µg/m³",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1230z.R0.nc4"
+    },
+    {
+      "variable": "NO2",
+      "timestamp": "2026-11-12T12:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_NO2_20261112_1230z.png",
+      "cmap": "magma",
+      "vmin": 0.0,
+      "vmax": 45.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1230z.R0.nc4"
+    },
+    {
+      "variable": "O3",
+      "timestamp": "2026-11-12T12:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_O3_20261112_1230z.png",
+      "cmap": "viridis",
+      "vmin": 10.0,
+      "vmax": 50.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1230z.R0.nc4"
+    },
+    {
+      "variable": "CO",
+      "timestamp": "2026-11-12T12:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_CO_20261112_1230z.png",
+      "cmap": "cividis",
+      "vmin": 50.0,
+      "vmax": 600.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1230z.R0.nc4"
+    },
+    {
+      "variable": "SO2",
+      "timestamp": "2026-11-12T12:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_SO2_20261112_1230z.png",
+      "cmap": "plasma",
+      "vmin": 0.0,
+      "vmax": 25.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1230z.R0.nc4"
+    },
+    {
+      "variable": "PM25_RH35",
+      "timestamp": "2026-11-12T15:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_1530z.png",
+      "cmap": "inferno",
+      "vmin": 0.0,
+      "vmax": 150.0,
+      "displayUnit": "µg/m³",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1530z.R0.nc4"
+    },
+    {
+      "variable": "NO2",
+      "timestamp": "2026-11-12T15:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_NO2_20261112_1530z.png",
+      "cmap": "magma",
+      "vmin": 0.0,
+      "vmax": 45.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1530z.R0.nc4"
+    },
+    {
+      "variable": "O3",
+      "timestamp": "2026-11-12T15:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_O3_20261112_1530z.png",
+      "cmap": "viridis",
+      "vmin": 10.0,
+      "vmax": 50.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1530z.R0.nc4"
+    },
+    {
+      "variable": "CO",
+      "timestamp": "2026-11-12T15:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_CO_20261112_1530z.png",
+      "cmap": "cividis",
+      "vmin": 50.0,
+      "vmax": 600.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1530z.R0.nc4"
+    },
+    {
+      "variable": "SO2",
+      "timestamp": "2026-11-12T15:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_SO2_20261112_1530z.png",
+      "cmap": "plasma",
+      "vmin": 0.0,
+      "vmax": 25.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1530z.R0.nc4"
+    },
+    {
+      "variable": "PM25_RH35",
+      "timestamp": "2026-11-12T18:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_1830z.png",
+      "cmap": "inferno",
+      "vmin": 0.0,
+      "vmax": 150.0,
+      "displayUnit": "µg/m³",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1830z.R0.nc4"
+    },
+    {
+      "variable": "NO2",
+      "timestamp": "2026-11-12T18:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_NO2_20261112_1830z.png",
+      "cmap": "magma",
+      "vmin": 0.0,
+      "vmax": 45.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1830z.R0.nc4"
+    },
+    {
+      "variable": "O3",
+      "timestamp": "2026-11-12T18:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_O3_20261112_1830z.png",
+      "cmap": "viridis",
+      "vmin": 10.0,
+      "vmax": 50.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1830z.R0.nc4"
+    },
+    {
+      "variable": "CO",
+      "timestamp": "2026-11-12T18:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_CO_20261112_1830z.png",
+      "cmap": "cividis",
+      "vmin": 50.0,
+      "vmax": 600.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1830z.R0.nc4"
+    },
+    {
+      "variable": "SO2",
+      "timestamp": "2026-11-12T18:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_SO2_20261112_1830z.png",
+      "cmap": "plasma",
+      "vmin": 0.0,
+      "vmax": 25.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_1830z.R0.nc4"
+    },
+    {
+      "variable": "PM25_RH35",
+      "timestamp": "2026-11-12T21:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_2130z.png",
+      "cmap": "inferno",
+      "vmin": 0.0,
+      "vmax": 150.0,
+      "displayUnit": "µg/m³",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_2130z.R0.nc4"
+    },
+    {
+      "variable": "NO2",
+      "timestamp": "2026-11-12T21:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_NO2_20261112_2130z.png",
+      "cmap": "magma",
+      "vmin": 0.0,
+      "vmax": 45.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_2130z.R0.nc4"
+    },
+    {
+      "variable": "O3",
+      "timestamp": "2026-11-12T21:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_O3_20261112_2130z.png",
+      "cmap": "viridis",
+      "vmin": 10.0,
+      "vmax": 50.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_2130z.R0.nc4"
+    },
+    {
+      "variable": "CO",
+      "timestamp": "2026-11-12T21:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_CO_20261112_2130z.png",
+      "cmap": "cividis",
+      "vmin": 50.0,
+      "vmax": 600.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_2130z.R0.nc4"
+    },
+    {
+      "variable": "SO2",
+      "timestamp": "2026-11-12T21:30:00Z",
+      "imageUrl": "/images/geos-cf/geos_cf_SO2_20261112_2130z.png",
+      "cmap": "plasma",
+      "vmin": 0.0,
+      "vmax": 25.0,
+      "displayUnit": "ppbv",
+      "width": 1920,
+      "height": 1080,
+      "bounds": {
+        "latMin": -90.0,
+        "latMax": 90.0,
+        "lonMin": -180.0,
+        "lonMax": 180.0
+      },
+      "sourceFile": "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_2130z.R0.nc4"
+    }
+  ]
+}
