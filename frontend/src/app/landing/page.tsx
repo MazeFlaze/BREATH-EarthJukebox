@@ -31,7 +31,7 @@ import {
 } from '@/types/landing/breathe';
 import { sonificationEngine } from '@/services/landing/sonificationEngine';
 import { AirflowLogo } from '@/components/landing/AirflowLogo';
-import { AmbientWaveformField, MiniWaveform } from '@/components/landing/AmbientWaveform';
+import { MiniWaveform } from '@/components/landing/AmbientWaveform';
 import { BreatheModal } from '@/components/landing/BreatheModal';
 
 const HERO_VIDEO_URL =
