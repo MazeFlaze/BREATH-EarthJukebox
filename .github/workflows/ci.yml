@@ -63,3 +63,6 @@ jobs:
 
       - name: Run TypeScript Typecheck
         run: npx tsc --noEmit
+
+      - name: Check Notebook Demo Audio Parity
+        run: npm run test:demo
