@@ -52,6 +52,20 @@ def init_db() -> None:
                 session.add(loc)
             session.commit()
             logger.info("Successfully seeded preset locations.")
+
+        # Auto-bootstrap existing local NetCDF granules in DATA_STORAGE_ROOT
+        from ..models.entities import DatasetAsset
+        asset_count = session.query(DatasetAsset).count()
+        if asset_count == 0:
+            raw_dir = settings.DATA_STORAGE_ROOT
+            if raw_dir.exists():
+                from ..services.ingestion_service import ingestion_service
+                for nc_file in sorted(raw_dir.glob("GEOS.cf.ana.*.nc4")):
+                    try:
+                        logger.info(f"Auto-bootstrapping existing NetCDF file: {nc_file.name}")
+                        ingestion_service.ingest_local_file(nc_file, db=session)
+                    except Exception as e:
+                        logger.warning(f"Could not auto-bootstrap {nc_file.name}: {e}")
     _db_initialized = True
 
 
