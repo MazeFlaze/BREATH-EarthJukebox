@@ -1,6 +1,10 @@
 # Dependencies
 node_modules/
 frontend/node_modules/
+.npm-cache/
+
+# Local-only notebook demo UI; processing/audio support remains versioned.
+/frontend/src/app/demo/
 .pnp
 .pnp.js
 .yarn/cache
