@@ -120,11 +120,6 @@ export default function LandingPage() {
               aria-label="Quick Navigation"
               className="liquid-glass rounded-xl sm:rounded-2xl px-4 sm:px-6 py-2 sm:py-2.5 flex items-center gap-4 sm:gap-6 border border-white/15 shadow-[inset_0_1px_2px_rgba(255,255,255,0.25),0_6px_25px_rgba(0,0,0,0.5)] backdrop-blur-2xl bg-white/[0.06] shrink-0"
             >
-              {/* Inner glowing sphere / indicator dot */}
-              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-b from-white/35 via-white/10 to-transparent shadow-[inset_0_1px_2px_rgba(255,255,255,0.5),0_2px_4px_rgba(0,0,0,0.6)] border border-white/25 flex items-center justify-center shrink-0">
-                <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.9)]" />
-              </div>
-
               {/* Experience Button */}
               <button
                 type="button"
