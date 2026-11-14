@@ -1,5 +1,7 @@
 # Demo A — GEOS-CF sáu chất: Scientific / Harmonic
 
+> Bản nâng cấp local của issue #22, hướng dẫn download/export hiện hành và ghi chú Focus/B được mô tả tại [ISSUE_22_LOCAL_DEMO.md](ISSUE_22_LOCAL_DEMO.md). Các đoạn mô tả giới hạn một snapshot và CLI cũ bên dưới là bối cảnh baseline A; dùng tài liệu mới khi thử giao diện local hiện tại.
+
 ## Phạm vi đã thống nhất
 
 Theo yêu cầu cập nhật của người dùng, giao diện route **`/demo` chỉ giữ local**, trong thư mục `frontend/src/app/demo/` đã được ignore và không nằm trong commit. Repo vẫn chứa producer, schema, audio engine, kiểm thử, JSON và sáu PNG dùng chung. Clone repo mới sẽ không có route `/demo`.
