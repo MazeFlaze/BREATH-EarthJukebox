@@ -10,7 +10,7 @@
     "lint": "next lint",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\"",
     "typecheck": "tsc --noEmit",
-    "test:demo": "node --test scripts/notebook-demo.test.cjs"
+    "test:demo": "node --test scripts/notebook-demo.test.cjs scripts/catalog-demo.test.cjs scripts/detail-demo.test.cjs scripts/context-demo.test.cjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",
