@@ -1,0 +1,66 @@
+from pathlib import Path
+from typing import Generator
+from sqlalchemy import create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from .config import settings
+from ..utils.logger import logger
+
+Base = declarative_base()
+
+# Resolve SQLite path relative to backend directory if relative URL is given
+db_url = settings.DATABASE_URL
+if db_url.startswith("sqlite:///"):
+    sqlite_path_str = db_url.replace("sqlite:///", "")
+    if sqlite_path_str.startswith("backend/"):
+        sqlite_path_str = sqlite_path_str[len("backend/"):]
+    sqlite_path = Path(sqlite_path_str)
+    if not sqlite_path.is_absolute():
+        project_root = Path(__file__).resolve().parent.parent.parent
+        resolved_path = (project_root / sqlite_path_str).resolve()
+        resolved_path.parent.mkdir(parents=True, exist_ok=True)
+        db_url = f"sqlite:///{resolved_path}"
+
+connect_args = {}
+if "sqlite" in db_url:
+    connect_args["check_same_thread"] = False
+
+engine = create_engine(
+    db_url,
+    connect_args=connect_args,
+    pool_pre_ping=True,
+    echo=False,
+)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+_db_initialized = False
+
+
+def init_db() -> None:
+    """Initializes tables and seeds preset locations if they do not exist."""
+    global _db_initialized
+    from ..models.entities import Location, PRESET_LOCATIONS
+    Base.metadata.create_all(bind=engine)
+
+    with SessionLocal() as session:
+        existing_count = session.query(Location).count()
+        if existing_count == 0:
+            logger.info("Seeding 10 default preset locations into database...")
+            for loc_data in PRESET_LOCATIONS:
+                loc = Location(**loc_data)
+                session.add(loc)
+            session.commit()
+            logger.info("Successfully seeded preset locations.")
+    _db_initialized = True
+
+
+def get_db() -> Generator[Session, None, None]:
+    """FastAPI dependency yielding database session per request."""
+    if not _db_initialized:
+        init_db()
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
