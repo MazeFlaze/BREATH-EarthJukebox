@@ -84,3 +84,13 @@ thumbs.db
 *.tsbuildinfo
 frontend/next-env.d.ts
 frontend/tsconfig.tsbuildinfo
+
+# NASA Earth Observation raw binaries & local databases
+*.nc
+*.nc4
+*.parquet
+*.db
+*.sqlite
+*.sqlite3
+backend/src/data/raw/*
+!backend/src/data/raw/.gitkeep

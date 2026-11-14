@@ -145,7 +145,7 @@ class NasaSvsProcessor:
                 unit=ev["unit"],
                 variable=ev["variable"],
                 description=ev["description"],
-                isMock=False,
+                isMock=True,
                 coordinates=ev["coordinates"],
                 provenance=provenance
             )
@@ -163,11 +163,11 @@ class NasaSvsProcessor:
             variable="Particulate Matter (PM2.5)",
             unit="µg/m³",
             description=(
-                "Tracking the transport and chemical evolution of fine Particulate Matter (PM2.5) "
-                "during the active July-August 2024 North American wildfire season, simulated by the "
-                "Goddard Earth Observing System Composition Forecasting (GEOS-CF) system."
+                "Illustrative prototype demonstration dataset tracking fine Particulate Matter (PM2.5) "
+                "across the July-August 2024 North American wildfire season. Derived from SVS 5533 "
+                "narrative descriptions; marked as synthetic mock data pending raw NetCDF grid extraction."
             ),
-            isMock=False,
+            isMock=True,
             range=DatasetRangeSchema(min=round(min_val, 1), max=round(max_val, 1)),
             observations=observations
         )
@@ -179,24 +179,24 @@ class NasaSvsProcessor:
         dump_dict = dataset.model_dump() if hasattr(dataset, "model_dump") else dataset.dict()
         payload = {
             "_meta": {
-                "notice": "VERIFIED NASA SVS 5533 & GEOS-CF SCIENTIFIC DATASET",
+                "notice": "PROTOTYPE DEMONSTRATION NASA SVS 5533 & GEOS-CF DATASET (SYNTHETIC EXAMPLES)",
                 "disclaimer": (
-                    "Dataset constructed from NASA Scientific Visualization Studio (SVS #5533) "
-                    "and NASA Global Modeling and Assimilation Office (GMAO) GEOS-CF model assimilation. "
-                    "Satellite imagery served via NASA GIBS. PM2.5 represents surface concentration in µg/m³ "
-                    "and is distinct from dimensionless Aerosol Optical Depth (AOD)."
+                    "Dataset constructed as an illustrative prototype demonstration based on NASA Scientific "
+                    "Visualization Studio (SVS #5533) event descriptions. Satellite imagery served via NASA GIBS. "
+                    "These values are flagged as synthetic (isMock=true). Scientifically verified observations "
+                    "must be ingested directly from authentic GEOS-CF NetCDF-4 model assimilation files."
                 ),
-                "isMock": False,
+                "isMock": True,
                 "targetVariable": "Surface Particulate Matter (PM2.5)",
                 "unit": "µg/m³",
-                "version": "1.0.0-verified-geos-cf",
+                "version": "1.0.0-prototype-svs",
                 "generatedAt": datetime.now(timezone.utc).isoformat()
             },
             "dataset": dump_dict
         }
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)
-        logger.info(f"Saved verified SVS 5533 dataset to: {file_path}")
+        logger.info(f"Saved prototype SVS 5533 dataset to: {file_path}")
 
     @classmethod
     def load_processed_dataset(cls, file_path: Path) -> Optional[DatasetSchema]:
