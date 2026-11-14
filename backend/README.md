@@ -50,14 +50,21 @@ backend/
 
 ### Setup & Installation
 
+Using **uv** (recommended for ultra-fast setup):
 ```bash
-# 1. Navigate to the repository root
-cd D:\explode\BREATHE-EarthJukebox
+cd backend
+uv venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+uv pip install -r requirements.txt
+```
 
-# 2. Create and activate a Python virtual environment
-python -m venv backend/.venv
-
-# Windows PowerShell:
+Or using standard Python **venv**:
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
 backend\.venv\Scripts\Activate.ps1
 # Or Linux/macOS:
 source backend/.venv/bin/activate
