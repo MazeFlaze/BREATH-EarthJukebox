@@ -30,11 +30,14 @@ class Settings(BaseSettings):
     NASA_GEOS_CF_PORTAL_URL: str = "https://portal.nccs.nasa.gov/datashare/gmao/geos-cf/v2/ana"
     NASA_GEOS_CF_OPENDAP_URL: str = "https://opendap.nccs.nasa.gov/dods/gmao/geos-cf/v2/ana"
     NASA_EARTHDATA_TOKEN: Optional[str] = None
+    ENABLE_REMOTE_OPENDAP: bool = False
+    OPENDAP_TIMEOUT_SECONDS: int = 5
 
     # Ingestion Controls
     INGEST_REQUEST_TIMEOUT: int = 60
     INGEST_MAX_RETRIES: int = 3
     INGEST_MAX_CONCURRENCY: int = 4
+    MAX_RAW_FILES_TO_KEEP: int = 10
 
     # Cache Configuration
     CACHE_ENABLED: bool = True
