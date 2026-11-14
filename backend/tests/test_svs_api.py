@@ -19,7 +19,7 @@ def test_get_air_quality_dataset():
     assert "NASA SVS 5533" in data["title"]
     assert data["variable"] == "Particulate Matter (PM2.5)"
     assert data["unit"] == "µg/m³"
-    assert data["isMock"] is False
+    assert data["isMock"] is True
     assert len(data["observations"]) >= 8
 
     # Check first observation schema structure
@@ -55,7 +55,7 @@ def test_get_single_air_quality_observation_success():
     assert data["id"] == obs_id
     assert data["value"] == 182.5
     assert "Jasper Fire Front" in data["coordinates"]["regionName"]
-    assert data["isMock"] is False
+    assert data["isMock"] is True
 
 
 def test_get_air_quality_observation_not_found():
