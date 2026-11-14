@@ -96,40 +96,40 @@ export default function LandingPage() {
       {/* Two-panel split foreground */}
       <main className="relative z-10 flex min-h-[100svh] w-full flex-col lg:flex-row">
         {/* Main Content Panel */}
-        <section className="relative flex flex-col min-h-[100svh] w-full lg:w-[52%] justify-between p-8 sm:p-10 lg:p-14">
+        <section className="relative flex flex-col min-h-[100svh] w-full lg:w-[52%] justify-between pt-5 px-6 pb-8 sm:pt-6 sm:px-8 sm:pb-10 lg:pt-8 lg:px-10 lg:pb-14">
           {/* Liquid-glass-strong overlay */}
           <div
-            className="liquid-glass-strong absolute inset-4 lg:inset-6 rounded-3xl pointer-events-none"
+            className="liquid-glass-strong absolute inset-3 sm:inset-4 lg:inset-5 rounded-3xl pointer-events-none"
             aria-hidden="true"
           />
 
           {/* Navigation inside Left Panel */}
-          <header className="relative z-10 flex items-center justify-between gap-4">
+          <header className="relative z-10 flex items-center justify-start gap-3 sm:gap-5 -mt-1 sm:-mt-2">
             <Link
               href="/"
               className="flex items-center gap-2.5 hover:scale-105 active:scale-95 transition-transform shrink-0"
             >
-              <AirflowLogo size={32} />
-              <span className="font-semibold text-2xl tracking-tighter text-white whitespace-nowrap">
+              <AirflowLogo size={36} />
+              <span className="font-semibold text-2xl sm:text-3xl tracking-tighter text-white whitespace-nowrap">
                 BREATHE
               </span>
             </Link>
 
-            {/* Pill Capsule Top Bar */}
+            {/* Pill Capsule Top Bar - Bigger, shifted up & to the left */}
             <nav
               aria-label="Quick Navigation"
-              className="liquid-glass rounded-full px-2 sm:px-3 py-1.5 flex items-center gap-1 sm:gap-2 border border-white/10 shadow-[inset_0_1px_1px_rgba(255,255,255,0.2),0_4px_20px_rgba(0,0,0,0.4)] backdrop-blur-xl bg-white/[0.04]"
+              className="liquid-glass rounded-full px-3 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 sm:gap-3 border border-white/15 shadow-[inset_0_1px_2px_rgba(255,255,255,0.25),0_6px_25px_rgba(0,0,0,0.5)] backdrop-blur-2xl bg-white/[0.06]"
             >
               {/* Inner glowing sphere / indicator dot */}
-              <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-gradient-to-b from-white/30 via-white/10 to-transparent shadow-[inset_0_1px_2px_rgba(255,255,255,0.4),0_1px_3px_rgba(0,0,0,0.5)] border border-white/20 flex items-center justify-center shrink-0">
-                <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.8)]" />
+              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-b from-white/35 via-white/10 to-transparent shadow-[inset_0_1px_2px_rgba(255,255,255,0.5),0_2px_4px_rgba(0,0,0,0.6)] border border-white/25 flex items-center justify-center shrink-0">
+                <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.9)]" />
               </div>
 
               {/* Experience Button */}
               <button
                 type="button"
                 onClick={() => setActiveModal('experience')}
-                className="px-3 py-1 rounded-full text-xs sm:text-sm font-medium text-white/80 hover:text-white hover:bg-white/10 transition-all cursor-pointer whitespace-nowrap"
+                className="px-3.5 py-1.5 rounded-full text-sm sm:text-base font-medium text-white/90 hover:text-white hover:bg-white/15 transition-all cursor-pointer whitespace-nowrap"
               >
                 Experience
               </button>
@@ -138,7 +138,7 @@ export default function LandingPage() {
               <button
                 type="button"
                 onClick={() => setActiveModal('about')}
-                className="px-3 py-1 rounded-full text-xs sm:text-sm font-medium text-white/80 hover:text-white hover:bg-white/10 transition-all cursor-pointer whitespace-nowrap"
+                className="px-3.5 py-1.5 rounded-full text-sm sm:text-base font-medium text-white/90 hover:text-white hover:bg-white/15 transition-all cursor-pointer whitespace-nowrap"
               >
                 About
               </button>
@@ -148,9 +148,9 @@ export default function LandingPage() {
                 type="button"
                 onClick={() => setActiveModal('menu')}
                 aria-label="Open navigation menu"
-                className="w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-all cursor-pointer shrink-0 ml-0.5"
+                className="w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center text-white/80 hover:text-white hover:bg-white/15 transition-all cursor-pointer shrink-0 ml-0.5"
               >
-                <Menu className="w-4 h-4 text-white" />
+                <Menu className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
               </button>
             </nav>
           </header>
