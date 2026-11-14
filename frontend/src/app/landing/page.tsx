@@ -3,17 +3,11 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
-  Wind,
   AudioLines,
   Headphones,
-  Play,
   Pause,
   Volume2,
   VolumeX,
-  Menu,
-  Minimize2,
-  Maximize2,
-  ExternalLink,
 } from 'lucide-react';
 import {
   BreatheModalKey,
@@ -34,7 +28,6 @@ export default function LandingPage() {
   const [activePresetId, setActivePresetId] = useState<SoundPreset['id'] | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [isLeftPanelMinimized, setIsLeftPanelMinimized] = useState(false);
 
   useEffect(() => {
     sonificationEngine.updateSignals(signals);
@@ -101,14 +94,8 @@ export default function LandingPage() {
 
       {/* Two-panel split foreground */}
       <main className="relative z-10 flex min-h-[100svh] w-full flex-col lg:flex-row">
-        {/* Left Panel (52% desktop, full width mobile; collapsible) */}
-        <section
-          className={`relative flex flex-col transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-            isLeftPanelMinimized
-              ? 'w-full lg:w-auto lg:min-w-[360px] self-start justify-start p-7 sm:p-8 lg:p-10'
-              : 'min-h-[100svh] w-full lg:w-[52%] justify-between p-8 sm:p-10 lg:p-14'
-          }`}
-        >
+        {/* Main Content Panel */}
+        <section className="relative flex flex-col min-h-[100svh] w-full lg:w-[52%] justify-between p-8 sm:p-10 lg:p-14">
           {/* Liquid-glass-strong overlay */}
           <div
             className="liquid-glass-strong absolute inset-4 lg:inset-6 rounded-3xl pointer-events-none"
@@ -126,72 +113,10 @@ export default function LandingPage() {
                 BREATHE
               </span>
             </Link>
-
-            <div className="flex items-center gap-2 shrink-0">
-              {/* Link directly to full NASA Earth Jukebox app */}
-              <Link
-                href="/"
-                className="liquid-glass rounded-full px-3.5 py-2 text-xs font-medium text-cyan-300 hover:text-white flex items-center gap-1.5 hover:scale-105 active:scale-95 transition-transform whitespace-nowrap shrink-0 border border-cyan-500/30"
-              >
-                <span>Live Jukebox</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </Link>
-
-              {/* Mobile-accessible quick signal tuner button */}
-              <button
-                type="button"
-                onClick={() => setActiveModal('signals')}
-                aria-label="Shape atmospheric signals"
-                className="lg:hidden liquid-glass w-9 h-9 rounded-full flex items-center justify-center text-white hover:scale-105 active:scale-95 transition-transform cursor-pointer"
-              >
-                <Wind className="w-4 h-4 text-white" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveModal('menu')}
-                className="liquid-glass rounded-full px-4 py-2 text-sm text-white flex items-center gap-2 hover:scale-105 active:scale-95 transition-transform cursor-pointer whitespace-nowrap shrink-0"
-              >
-                <Menu className="w-4 h-4 text-white" />
-                <span>Menu</span>
-              </button>
-
-              {isLeftPanelMinimized && (
-                <button
-                  type="button"
-                  onClick={handleTogglePlay}
-                  aria-label={isPlaying ? 'Pause listening' : 'Listen to the World'}
-                  aria-pressed={isPlaying}
-                  className="liquid-glass w-9 h-9 rounded-full flex items-center justify-center text-white hover:scale-105 active:scale-95 transition-transform cursor-pointer shrink-0"
-                >
-                  {isPlaying ? (
-                    <Pause className="w-4 h-4 text-white" />
-                  ) : (
-                    <Play className="w-4 h-4 text-white ml-0.5" />
-                  )}
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => setIsLeftPanelMinimized((prev) => !prev)}
-                aria-label={isLeftPanelMinimized ? 'Expand panel' : 'Minimize panel'}
-                aria-expanded={!isLeftPanelMinimized}
-                className="liquid-glass w-9 h-9 rounded-full flex items-center justify-center text-white hover:scale-105 active:scale-95 transition-transform cursor-pointer shrink-0"
-              >
-                {isLeftPanelMinimized ? (
-                  <Maximize2 className="w-4 h-4 text-white" />
-                ) : (
-                  <Minimize2 className="w-4 h-4 text-white" />
-                )}
-              </button>
-            </div>
           </header>
 
-          {!isLeftPanelMinimized && (
-            <>
-              {/* Centered Hero */}
-              <div className="relative z-10 flex-1 flex flex-col items-center justify-center text-center py-6 px-2">
+          {/* Centered Hero */}
+          <div className="relative z-10 flex-1 flex flex-col items-center justify-center text-center py-6 px-2">
                 <AirflowLogo size={80} animate className="mb-5" />
 
                 <span className="text-[11px] tracking-[0.22em] uppercase text-white/50 mb-3">
@@ -289,18 +214,12 @@ export default function LandingPage() {
                     BREATHE
                   </span>
                   <span className="h-px w-8 bg-white/25" aria-hidden="true" />
-                </div>
-              </footer>
-            </>
-          )}
+            </div>
+          </footer>
         </section>
 
-        {/* Right Panel (48% when expanded, expands when left panel is minimized, desktop only) */}
-        <aside
-          className={`hidden lg:flex min-h-[100svh] flex-col justify-start p-10 lg:p-12 transition-all duration-300 ${
-            isLeftPanelMinimized ? 'lg:flex-1' : 'lg:w-[48%]'
-          }`}
-        >
+        {/* Right Panel */}
+        <aside className="hidden lg:flex min-h-[100svh] flex-col justify-start p-10 lg:p-12 w-[48%]">
         </aside>
       </main>
 
