@@ -65,9 +65,9 @@ def setup_test_environment():
 
     # Ingest into DB if not already indexed
     with SessionLocal() as db:
-        service = IngestionService(db)
+        service = IngestionService()
         try:
-            service.ingest_local_granule(sample_file)
+            service.ingest_local_file(sample_file, db=db)
         except Exception:
             pass
 
