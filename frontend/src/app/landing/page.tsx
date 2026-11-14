@@ -107,9 +107,9 @@ export default function LandingPage() {
           <header className="relative z-10 flex items-center justify-between gap-4 -mt-1 sm:-mt-2">
             <Link
               href="/"
-              className="flex items-center gap-2.5 hover:scale-105 active:scale-95 transition-transform shrink-0"
+              className="flex items-center gap-3 hover:scale-105 active:scale-95 transition-transform shrink-0"
             >
-              <AirflowLogo size={36} />
+              <AirflowLogo size={46} />
               <span className="font-semibold text-2xl sm:text-3xl tracking-tighter text-white whitespace-nowrap">
                 BREATHE
               </span>
@@ -157,7 +157,7 @@ export default function LandingPage() {
 
           {/* Centered Hero */}
           <div className="relative z-10 flex-1 flex flex-col items-center justify-center text-center py-6 px-2">
-            <AirflowLogo size={80} animate className="mb-5" />
+            <AirflowLogo size={105} animate className="mb-5" />
 
             <span className="text-[11px] tracking-[0.22em] uppercase text-white/50 mb-3">
               A QUIETER WAY TO DISCOVER THE WORLD
