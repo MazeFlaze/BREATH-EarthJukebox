@@ -18,6 +18,17 @@ class NetCDFProcessor:
 
     FILL_VALUE_THRESHOLD = 1e14  # NASA GEOS-CF uses 1e15 for missing values
 
+    # Concentration tier thresholds (moderate_min, high_min) in native GEOS-CF science units
+    # Aligned with WHO air quality guidelines (PM2.5/PM10) and GEOS-CF EDA scales (trace gases)
+    CONCENTRATION_TIER_THRESHOLDS: Dict[str, Tuple[float, float]] = {
+        "PM25_RH35": (15.0, 35.0),        # µg/m³ (WHO 24h AQG / IT-3)
+        "PM10_RH35": (45.0, 100.0),       # µg/m³ (WHO 24h AQG / IT-2)
+        "CO": (1.0e-7, 3.0e-7),           # 100 ppbv / 300 ppbv in mol mol-1
+        "NO2": (2.0e-9, 1.5e-8),          # 2 ppbv / 15 ppbv in mol mol-1
+        "O3": (3.0e-8, 4.0e-8),           # 30 ppbv / 40 ppbv in mol mol-1
+        "SO2": (1.0e-9, 5.0e-9),          # 1 ppbv / 5 ppbv in mol mol-1
+    }
+
     @staticmethod
     def normalize_longitude(lon: float) -> float:
         """
@@ -222,3 +233,184 @@ class NetCDFProcessor:
         for idx, p in enumerate(all_points):
             p["order"] = idx
         return all_points
+
+    @classmethod
+    def _select_time_and_surface(
+        cls,
+        da: xr.DataArray,
+        timestamp: Optional[Union[str, datetime]] = None,
+    ) -> Tuple[xr.DataArray, Optional[str]]:
+        """Slices a DataArray to a single timestamp (nearest or first) and surface level."""
+        if "time" in da.dims:
+            if timestamp is not None:
+                target_dt = pd.to_datetime(timestamp, utc=True)
+                da = da.sel(time=target_dt.to_numpy(), method="nearest")
+            else:
+                da = da.isel(time=0)
+
+        resolved_time: Optional[str] = None
+        if "time" in da.coords:
+            t_val = da["time"].values
+            resolved_time = pd.to_datetime(t_val, utc=True).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        if "lev" in da.dims:
+            da = da.isel(lev=0)
+
+        return da, resolved_time
+
+    @classmethod
+    def _compute_tier_ratios(cls, variable: str, valid_values: np.ndarray) -> Dict[str, float]:
+        """Computes low/moderate/high pixel ratios summing to 1.0 for valid ROI observations."""
+        if valid_values.size == 0:
+            return {"low": 0.0, "moderate": 0.0, "high": 0.0}
+
+        thresholds = cls.CONCENTRATION_TIER_THRESHOLDS.get(variable)
+        if thresholds is not None:
+            mod_thresh, high_thresh = thresholds
+        else:
+            mod_thresh = float(np.percentile(valid_values, 33.33))
+            high_thresh = float(np.percentile(valid_values, 66.67))
+            if mod_thresh >= high_thresh:
+                return {"low": 1.0, "moderate": 0.0, "high": 0.0}
+
+        total = float(valid_values.size)
+        low_count = int(np.sum(valid_values < mod_thresh))
+        mod_count = int(np.sum((valid_values >= mod_thresh) & (valid_values < high_thresh)))
+
+        low_ratio = round(low_count / total, 4)
+        cum_mod = round((low_count + mod_count) / total, 4)
+        mod_ratio = round(max(0.0, cum_mod - low_ratio), 4)
+        high_ratio = round(max(0.0, 1.0 - cum_mod), 4)
+        return {"low": low_ratio, "moderate": mod_ratio, "high": high_ratio}
+
+    @classmethod
+    def extract_bbox_summary(
+        cls,
+        ds: xr.Dataset,
+        variable: str,
+        lat_min: float,
+        lat_max: float,
+        lon_min: float,
+        lon_max: float,
+        timestamp: Optional[Union[str, datetime]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Extracts spatial summary statistics across an arbitrary rectangular bounding box
+        [lat_min, lat_max] x [lon_min, lon_max], supporting both 2D drag-box ROI selection
+        and spherical 3D patches projected to lat/lon coordinates.
+        """
+        if variable not in ds.data_vars:
+            raise KeyError(f"Variable '{variable}' not found in dataset. Available: {list(ds.data_vars.keys())}")
+
+        coords = (lat_min, lat_max, lon_min, lon_max)
+        if any(not math.isfinite(float(c)) for c in coords):
+            raise ValueError("Bounding box coordinates must be finite numeric values.")
+        if lat_min < -90.0 or lat_max > 90.0 or lat_min > lat_max:
+            raise ValueError(
+                f"Invalid latitude bounds [{lat_min}, {lat_max}]; expected -90.0 <= lat_min <= lat_max <= 90.0."
+            )
+
+        da, resolved_time = cls._select_time_and_surface(ds[variable], timestamp=timestamp)
+        grid_lats = da["lat"].values.astype(np.float64)
+        grid_lons = da["lon"].values.astype(np.float64)
+
+        lat_mask = (grid_lats >= lat_min - 1.0e-9) & (grid_lats <= lat_max + 1.0e-9)
+        is_standard_lon_grid = float(np.max(grid_lons)) <= 180.0 + 1.0e-9
+        is_cartesian_box = (-180.0 <= lon_min <= lon_max <= 180.0) and is_standard_lon_grid
+        if is_cartesian_box:
+            lon_mask = (grid_lons >= lon_min - 1.0e-9) & (grid_lons <= lon_max + 1.0e-9)
+        else:
+            lon_span = min(360.0, (lon_max - lon_min) % 360.0 if lon_max < lon_min else (lon_max - lon_min))
+            lon_mask = ((grid_lons - lon_min) % 360.0) <= (lon_span + 1.0e-9)
+
+        matched_lats = grid_lats[lat_mask]
+        matched_lons = grid_lons[lon_mask]
+
+        snapped_to_nearest = False
+        if matched_lats.size == 0 or matched_lons.size == 0:
+            # Drag-box smaller than grid spacing: fall back cleanly to nearest grid center
+            center_lat = 0.5 * (lat_min + lat_max)
+            center_lon = cls.normalize_longitude(
+                0.5 * (lon_min + lon_max) if lon_min <= lon_max else lon_min + 0.5 * ((lon_max - lon_min) % 360.0)
+            )
+            lat_idx = int(np.argmin(np.abs(grid_lats - center_lat)))
+            lon_diffs = np.abs(((grid_lons - center_lon + 180.0) % 360.0) - 180.0)
+            lon_idx = int(np.argmin(lon_diffs))
+            region_da = da.isel(lat=lat_idx, lon=lon_idx)
+            arr = np.atleast_1d(region_da.values.astype(np.float64))
+            snapped_to_nearest = True
+        else:
+            region_da = da.sel(lat=matched_lats, lon=matched_lons)
+            arr = region_da.values.astype(np.float64)
+
+        valid_mask = np.isfinite(arr) & (np.abs(arr) < cls.FILL_VALUE_THRESHOLD)
+        valid_values = arr[valid_mask]
+
+        total_count = int(arr.size)
+        valid_count = int(valid_values.size)
+        missing_count = total_count - valid_count
+
+        if valid_count > 0:
+            mean_val: Optional[float] = float(np.mean(valid_values))
+            p90_val: Optional[float] = float(np.percentile(valid_values, 90))
+            max_val: Optional[float] = float(np.max(valid_values))
+        else:
+            mean_val = None
+            p90_val = None
+            max_val = None
+
+        return {
+            "variable": variable,
+            "raw_unit": ds[variable].attrs.get("units", "unknown"),
+            "timestamp": resolved_time,
+            "bounds": {
+                "lat_min": float(lat_min),
+                "lat_max": float(lat_max),
+                "lon_min": float(lon_min),
+                "lon_max": float(lon_max),
+            },
+            "snapped_to_nearest": snapped_to_nearest,
+            "mean": mean_val,
+            "p90": p90_val,
+            "max": max_val,
+            "valid_count": valid_count,
+            "missing_count": missing_count,
+            "total_count": total_count,
+            "tier_ratios": cls._compute_tier_ratios(variable, valid_values),
+        }
+
+    @classmethod
+    def extract_region_summary(
+        cls,
+        ds: xr.Dataset,
+        variable: str,
+        lat: float,
+        lon: float,
+        delta_deg: float = 0.5,
+        timestamp: Optional[Union[str, datetime]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Extracts regional ROI summary statistics within [lat ± delta_deg, lon ± delta_deg].
+        Delegates to extract_bbox_summary while validating center coordinates and radius delta.
+        """
+        val_lat, val_lon = cls.validate_coordinates(lat, lon)
+        if not math.isfinite(delta_deg) or delta_deg <= 0.0:
+            raise ValueError(f"delta_deg must be a positive finite number, got {delta_deg}.")
+
+        lat_min = max(-90.0, val_lat - delta_deg)
+        lat_max = min(90.0, val_lat + delta_deg)
+        lon_min = val_lon - delta_deg
+        lon_max = val_lon + delta_deg
+
+        summary = cls.extract_bbox_summary(
+            ds=ds,
+            variable=variable,
+            lat_min=lat_min,
+            lat_max=lat_max,
+            lon_min=lon_min,
+            lon_max=lon_max,
+            timestamp=timestamp,
+        )
+        summary["center"] = {"lat": val_lat, "lon": val_lon}
+        summary["delta_deg"] = float(delta_deg)
+        return summary

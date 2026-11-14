@@ -160,3 +160,180 @@ def test_observation_normalizer():
     assert ObservationNormalizer.normalize("PM25_RH35", None) is None
     # Unknown variable without reference range returns None
     assert ObservationNormalizer.normalize("UNKNOWN_VAR", 50.0) is None
+
+
+def test_observation_normalizer_log_scale_and_quantile_calibration():
+    """Verify EDA-calibrated perceptual normalization (log_scale and O3 quantile_linear)."""
+    # Boundary clamping at global [P01, P99]
+    assert ObservationNormalizer.normalize("PM25_RH35", 4.03, method="log_scale") == 0.0
+    assert ObservationNormalizer.normalize("PM25_RH35", 1.0, method="log_scale") == 0.0
+    assert ObservationNormalizer.normalize("PM25_RH35", 71.05, method="log_scale") == 1.0
+    assert ObservationNormalizer.normalize("PM25_RH35", 200.0, method="log_scale") == 1.0
+
+    # Perceptual expansion at global median (P50) vs compressed linear fixed bounds
+    for var, p50_val in [
+        ("PM25_RH35", 7.63),
+        ("CO", 9.45e-8),
+        ("NO2", 3.26e-10),
+        ("SO2", 2.50e-10),
+    ]:
+        linear_score = ObservationNormalizer.normalize(var, p50_val)
+        log_score = ObservationNormalizer.normalize(var, p50_val, method="log_scale")
+        flag_score = ObservationNormalizer.normalize(var, p50_val, log_scale=True)
+        assert linear_score is not None and log_score is not None
+        assert log_score == flag_score
+        assert log_score > linear_score * 2.5
+        assert 0.12 <= log_score <= 0.45
+
+    # Verify unit invariance for NO2 between mol mol-1 and ppbv formulation
+    p01_ppb, p50_ppb, p99_ppb = 0.111, 0.326, 20.8
+    test_val_mol = 2.0e-9  # 2.0 ppbv
+    expected_log = round(
+        math.log1p((2.0 - p01_ppb) / (p50_ppb - p01_ppb))
+        / math.log1p((p99_ppb - p01_ppb) / (p50_ppb - p01_ppb)),
+        4,
+    )
+    assert ObservationNormalizer.normalize("NO2", test_val_mol, method="log_scale") == expected_log
+
+    # Symmetric O3 uses calibrated quantile_linear [1.95e-8, 4.26e-8]
+    assert ObservationNormalizer.normalize("O3", 1.95e-8, method="log_scale") == 0.0
+    assert ObservationNormalizer.normalize("O3", 3.105e-8, method="log_scale") == 0.5
+    assert ObservationNormalizer.normalize("O3", 4.26e-8, method="log_scale") == 1.0
+
+    # Non-finite values and unknown method guards
+    assert ObservationNormalizer.normalize("NO2", float("nan"), method="log_scale") is None
+    assert ObservationNormalizer.normalize("NO2", float("inf"), method="log_scale") is None
+    with pytest.raises(ValueError, match="Unsupported normalization method"):
+        ObservationNormalizer.normalize("NO2", 1e-9, method="unknown_mode")
+
+
+def test_observation_normalizer_to_display_unit():
+    """Verify mol mol-1 to ppbv conversion while retaining raw unit provenance."""
+    no2_conv = ObservationNormalizer.to_display_unit("NO2", 3.26e-10)
+    assert no2_conv.raw_value == pytest.approx(3.26e-10)
+    assert no2_conv.raw_unit == "mol mol-1"
+    assert no2_conv.display_value == pytest.approx(0.326)
+    assert no2_conv.display_unit == "ppbv"
+    assert no2_conv.conversion_factor == 1.0e9
+
+    co_conv = ObservationNormalizer.to_display_unit("CO", 9.45e-8, raw_unit="mol mol-1")
+    assert co_conv.display_value == pytest.approx(94.5)
+    assert co_conv.display_unit == "ppbv"
+    assert co_conv.raw_unit == "mol mol-1"
+
+    pm_conv = ObservationNormalizer.to_display_unit("PM25_RH35", 42.5)
+    assert pm_conv.raw_value == pytest.approx(42.5)
+    assert pm_conv.raw_unit == "ug m-3"
+    assert pm_conv.display_value == pytest.approx(42.5)
+    assert pm_conv.display_unit == "µg/m³"
+    assert pm_conv.conversion_factor == 1.0
+
+    aod_conv = ObservationNormalizer.to_display_unit("AOD", 0.35)
+    assert aod_conv.display_unit == "dimensionless"
+    assert aod_conv.raw_unit == "dimensionless"
+
+    missing_conv = ObservationNormalizer.to_display_unit("SO2", None)
+    assert missing_conv.raw_value is None
+    assert missing_conv.display_value is None
+    assert missing_conv.display_unit == "ppbv"
+
+
+@pytest.fixture
+def roi_dataset() -> xr.Dataset:
+    """Builds a 0.5-deg synthetic grid for ROI spatial aggregation and edge-case tests."""
+    times = pd.date_range("2026-11-13 01:30:00", periods=1, freq="1h")
+    lats = np.array([20.0, 20.5, 21.0, 21.5, 22.0], dtype=np.float32)
+    lons = np.array([-179.5, 104.5, 105.0, 105.5, 106.0, 179.5], dtype=np.float32)
+
+    # Monotonic coordinates with controllable 5x6 PM2.5 + CO grid
+    grid_pm25 = np.full((1, 1, 5, 6), 10.0, dtype=np.float64)
+    # Within lat [20.5, 21.5] (idx 1..3) and lon [105.0, 106.0] (idx 2..4) -> 9 cells total:
+    # 7 valid cells across Low (<15), Moderate [15,35), High (>=35), plus 1 fill (1e15) & 1 NaN
+    roi_patch = np.array([
+        [5.0, 10.0, 20.0],     # 2 low, 1 moderate
+        [25.0, 40.0, 1e15],    # 1 moderate, 1 high, 1 fill
+        [50.0, 80.0, np.nan],  # 2 high, 1 NaN
+    ], dtype=np.float64)
+    grid_pm25[0, 0, 1:4, 2:5] = roi_patch
+
+    # Antimeridian all-missing region at lons [-179.5, 179.5] (indices 0 and 5)
+    grid_pm25[0, 0, :, 0] = 1e15
+    grid_pm25[0, 0, :, 5] = 1e15
+    grid_pm25[0, 0, 0, 5] = np.nan
+
+    grid_co = np.full((1, 1, 5, 6), 1.5e-7, dtype=np.float64)
+
+    return xr.Dataset(
+        data_vars={
+            "PM25_RH35": (["time", "lev", "lat", "lon"], grid_pm25, {"units": "ug m-3"}),
+            "CO": (["time", "lev", "lat", "lon"], grid_co, {"units": "mol mol-1"}),
+        },
+        coords={"time": times, "lev": [1.0], "lat": lats, "lon": lons},
+    )
+
+
+def test_extract_region_summary_and_fill_exclusion(roi_dataset: xr.Dataset):
+    """Verify ROI aggregation calculates mean, p90, max, counts, and tier ratios excluding fill/NaN."""
+    summary = NetCDFProcessor.extract_region_summary(
+        roi_dataset,
+        variable="PM25_RH35",
+        lat=21.0,
+        lon=105.5,
+        delta_deg=0.5,
+        timestamp="2026-11-13T01:30:00Z",
+    )
+
+    valid_expected = np.array([5.0, 10.0, 20.0, 25.0, 40.0, 50.0, 80.0])
+    assert summary["raw_unit"] == "ug m-3"
+    assert summary["snapped_to_nearest"] is False
+    assert summary["valid_count"] == 7
+    assert summary["missing_count"] == 2
+    assert summary["total_count"] == 9
+    assert summary["mean"] == pytest.approx(float(np.mean(valid_expected)))
+    assert summary["p90"] == pytest.approx(float(np.percentile(valid_expected, 90)))
+    assert summary["max"] == pytest.approx(80.0)
+
+    tiers = summary["tier_ratios"]
+    assert tiers["low"] == pytest.approx(2 / 7, abs=1e-4)
+    assert tiers["moderate"] == pytest.approx(2 / 7, abs=1e-4)
+    assert tiers["high"] == pytest.approx(3 / 7, abs=1e-4)
+    assert sum(tiers.values()) == pytest.approx(1.0)
+
+
+def test_extract_bbox_summary_drag_box_and_edge_cases(roi_dataset: xr.Dataset):
+    """Verify arbitrary drag-box bounds, tiny boxes (< grid step), antimeridian missing ROIs, and guards."""
+    # Asymmetric rectangular drag-box covering lat [20.5, 21.0] x lon [105.0, 106.0]
+    rect_summary = NetCDFProcessor.extract_bbox_summary(
+        roi_dataset, "PM25_RH35", lat_min=20.5, lat_max=21.0, lon_min=105.0, lon_max=106.0
+    )
+    rect_valid = np.array([5.0, 10.0, 20.0, 25.0, 40.0])
+    assert rect_summary["valid_count"] == 5
+    assert rect_summary["missing_count"] == 1
+    assert rect_summary["mean"] == pytest.approx(float(np.mean(rect_valid)))
+
+    # Sub-grid drag box falling strictly between grid lines -> snaps cleanly to nearest cell (21.0, 105.0)
+    tiny_summary = NetCDFProcessor.extract_bbox_summary(
+        roi_dataset, "PM25_RH35", lat_min=20.8, lat_max=20.9, lon_min=104.8, lon_max=104.9
+    )
+    assert tiny_summary["snapped_to_nearest"] is True
+    assert tiny_summary["valid_count"] == 1
+    assert tiny_summary["mean"] == pytest.approx(25.0)
+
+    # All-fill / NaN ROI crossing antimeridian (179.0 to 181.0 -> includes 179.5 & -179.5)
+    empty_roi = NetCDFProcessor.extract_bbox_summary(
+        roi_dataset, "PM25_RH35", lat_min=20.0, lat_max=20.5, lon_min=179.0, lon_max=181.0
+    )
+    assert empty_roi["valid_count"] == 0
+    assert empty_roi["missing_count"] == 4
+    assert empty_roi["mean"] is None
+    assert empty_roi["p90"] is None
+    assert empty_roi["max"] is None
+    assert empty_roi["tier_ratios"] == {"low": 0.0, "moderate": 0.0, "high": 0.0}
+
+    # Validation guards
+    with pytest.raises(KeyError, match="NO_SUCH_VAR"):
+        NetCDFProcessor.extract_region_summary(roi_dataset, "NO_SUCH_VAR", lat=21.0, lon=105.5)
+    with pytest.raises(ValueError, match="delta_deg"):
+        NetCDFProcessor.extract_region_summary(roi_dataset, "PM25_RH35", lat=21.0, lon=105.5, delta_deg=-0.5)
+    with pytest.raises(ValueError, match="Invalid latitude bounds"):
+        NetCDFProcessor.extract_bbox_summary(roi_dataset, "PM25_RH35", lat_min=22.0, lat_max=20.0, lon_min=105.0, lon_max=106.0)
