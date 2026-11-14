@@ -156,7 +156,8 @@ class NetCDFProcessor:
         # Extract time string
         point_time = None
         if "time" in point_da.coords:
-            t_val = point_da["time"].values
+            t_arr = np.asarray(point_da["time"].values)
+            t_val = t_arr.flat[0] if t_arr.ndim > 0 else point_da["time"].values
             point_time = pd.to_datetime(t_val, utc=True).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         unit = da.attrs.get("units", "unknown")

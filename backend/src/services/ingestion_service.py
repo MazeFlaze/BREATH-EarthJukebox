@@ -214,5 +214,51 @@ class IngestionService:
 
         return results
 
+    def ingest_directory(
+        self,
+        db: Session,
+        raw_dir: Optional[Path] = None,
+        pattern: str = "GEOS.cf.ana.*.nc4",
+        skip_existing: bool = True,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Batch-ingests local NetCDF-4 granules in raw_dir into SQLite/PostgreSQL so preset
+        locations are pre-materialized in observation_samples for DB-first temporal queries.
+        """
+        target_dir = Path(raw_dir) if raw_dir is not None else settings.DATA_STORAGE_ROOT
+        files = sorted(target_dir.glob(pattern))
+        meta = self.provider.get_source_metadata()
+
+        ingested = 0
+        skipped = 0
+        failed = 0
+        total_samples = 0
+
+        for fp in files:
+            asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{meta['datasetId']}:{fp.name}"))
+            if skip_existing and not dry_run:
+                existing = DatasetRepository.get_asset(db, asset_id)
+                if existing and existing.ingest_status == "completed":
+                    skipped += 1
+                    continue
+
+            try:
+                res = self.ingest_local_file(fp, db=db, dry_run=dry_run)
+                ingested += 1
+                total_samples += int(res.get("materialized_samples", 0))
+            except Exception as e:
+                logger.warning(f"Batch ingest skipped/failed for {fp.name}: {e}")
+                failed += 1
+
+        return {
+            "directory": str(target_dir),
+            "files_found": len(files),
+            "ingested": ingested,
+            "skipped": skipped,
+            "failed": failed,
+            "materialized_samples": total_samples,
+        }
+
 
 ingestion_service = IngestionService()

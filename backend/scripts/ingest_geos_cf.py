@@ -42,9 +42,14 @@ def parse_args():
     )
     parser.add_argument(
         "--source",
-        choices=["local", "nasa"],
+        choices=["local", "local-dir", "nasa"],
         required=True,
-        help="Ingestion source: 'local' for an existing NetCDF file, 'nasa' for NCCS DataShare remote retrieval.",
+        help="Ingestion source: 'local' for one file, 'local-dir' for batch directory ingest, 'nasa' for remote retrieval.",
+    )
+    parser.add_argument(
+        "--dir",
+        type=str,
+        help="Directory of local .nc4 granules (optional for --source local-dir, defaults to DATA_STORAGE_ROOT).",
     )
     parser.add_argument(
         "--file",
@@ -103,6 +108,22 @@ def main():
                 sys.exit(0)
             except Exception as e:
                 logger.error(f"Ingestion failed: {e}")
+                sys.exit(1)
+
+        elif args.source == "local-dir":
+            try:
+                summary = ingestion_service.ingest_directory(
+                    db=db,
+                    raw_dir=Path(args.dir).resolve() if args.dir else None,
+                    dry_run=args.dry_run,
+                )
+                print(
+                    f"\n[SUCCESS] Batch ingested {summary['ingested']}/{summary['files_found']} files "
+                    f"({summary['skipped']} skipped, {summary['materialized_samples']} preset samples)."
+                )
+                sys.exit(0)
+            except Exception as e:
+                logger.error(f"Batch ingestion failed: {e}")
                 sys.exit(1)
 
         elif args.source == "nasa":
