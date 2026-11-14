@@ -1,5 +1,5 @@
 export type Pollutant = "pm25_rh35" | "pm10_rh35" | "co" | "no2" | "o3" | "so2";
-export type DataMode = "global" | "region";
+export type DataMode = "global" | "region" | "temporal" | "journey";
 export type AudioMode = "scientific" | "harmonic";
 export type Direction = "forward" | "reverse";
 export type DemoState = "ready" | "playing" | "paused";
@@ -11,7 +11,7 @@ export interface FrozenEvent {
     pollutant: Pollutant;
     scan_id: string;
     timestamp_utc: string;
-    source_sha256: string;
+    source_sha256: string | null;
     bounds: { lat: [number, number]; lon: [number, number] };
     raw_value: number | null;
     value: number | null;
@@ -29,9 +29,25 @@ export interface FrozenEvent {
   bass_midi: number | null;
   melody_note_count: number;
   delta_canonical_score: number | null;
-  variation_kind: "spatial_contrast" | "region_comparison";
+  variation_kind: "spatial_contrast" | "region_comparison" | "temporal_change";
   texture_pcm: number[][];
+  focus_feature?: FocusFeature;
+  timeline_gap?: boolean;
+  chronological_delta?: number | null;
 }
+
+export interface FocusFeature {
+  cell_id: string;
+  p90: number | null;
+  iqr: number | null;
+  spread_score: number;
+  neighbor_contrast: number;
+  coverage: number;
+  chronological_contrast?: number;
+}
+export type MusicProfile = "baseline" | "focus";
+export type FocusStem = "lead" | "pad" | "bass" | "texture";
+export interface StemControl { gain: number; muted: boolean; solo: boolean }
 
 export interface DemoAudioConfig {
   sample_rate: number;
