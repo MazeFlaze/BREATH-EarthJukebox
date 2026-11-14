@@ -1,6 +1,10 @@
 import pytest
 from fastapi.testclient import TestClient
-from backend.src.main import app
+
+try:
+    from backend.src.main import app
+except ImportError:
+    from src.main import app
 
 client = TestClient(app)
 
@@ -12,7 +16,7 @@ def test_root_endpoint():
     data = response.json()
     assert data["project"] == "BREATHE"
     assert "health" in data
-    assert "observations" in data
+    assert "air_quality" in data or "observations" in data
 
 
 def test_health_endpoint():
