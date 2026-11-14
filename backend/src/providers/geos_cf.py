@@ -17,6 +17,7 @@ class GEOSCFProvider(BaseNasaProvider):
     """
 
     DEFAULT_PORTAL_URL = "https://portal.nccs.nasa.gov/datashare/gmao/geos-cf/v2/ana"
+    DEFAULT_OPENDAP_URL = "https://opendap.nccs.nasa.gov/dods/gmao/geos-cf/v2/ana"
     DEFAULT_PRODUCT = "aqc_tavg_1hr_glo_L1440x721_slv"
     DATASET_ID = "geos-cf-v2-aqc"
 
@@ -68,12 +69,14 @@ class GEOSCFProvider(BaseNasaProvider):
     def __init__(
         self,
         portal_url: Optional[str] = None,
+        opendap_url: Optional[str] = None,
         product: Optional[str] = None,
         raw_storage_dir: Optional[Path] = None,
         timeout_seconds: int = 60,
         max_retries: int = 3,
     ):
         self.portal_url = (portal_url or self.DEFAULT_PORTAL_URL).rstrip("/")
+        self.opendap_url = (opendap_url or self.DEFAULT_OPENDAP_URL).rstrip("/")
         self.product = product or self.DEFAULT_PRODUCT
         if raw_storage_dir is None:
             raw_storage_dir = Path(__file__).resolve().parent.parent / "data" / "raw"
@@ -120,6 +123,45 @@ class GEOSCFProvider(BaseNasaProvider):
         day_str = dt.strftime("%d")
         filename = self.format_granule_filename(dt)
         return f"{self.portal_url}/Y{year_str}/M{month_str}/D{day_str}/{filename}"
+
+    def build_opendap_url(self, dt: datetime) -> str:
+        """
+        Constructs OPeNDAP DODS URL for remote subsetting without full granule download.
+        Example: .../dods/gmao/geos-cf/v2/ana/Y2026/M11/D13/GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261113_0130z.R0
+        """
+        year_str = dt.strftime("%Y")
+        month_str = dt.strftime("%m")
+        day_str = dt.strftime("%d")
+        base_name = self.format_granule_filename(dt).replace(".nc4", "")
+        return f"{self.opendap_url}/Y{year_str}/M{month_str}/D{day_str}/{base_name}"
+
+    def extract_point_opendap(
+        self,
+        dt: datetime,
+        lat: float,
+        lon: float,
+        variable: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Performs remote slice for a single observation point via NASA OPeNDAP DODS.
+        Returns point dictionary if successful, or None on network/connection failure.
+        """
+        from ..core.config import settings
+        if not getattr(settings, "ENABLE_REMOTE_OPENDAP", False):
+            return None
+
+        import xarray as xr
+        from ..processors.netcdf_processor import NetCDFProcessor
+
+        opendap_url = self.build_opendap_url(dt)
+        try:
+            logger.info(f"Attempting remote OPeNDAP slice from: {opendap_url}")
+            with xr.open_dataset(opendap_url) as ds:
+                pt_data = NetCDFProcessor.extract_point_value(ds, variable, lat, lon, timestamp=dt)
+                return pt_data
+        except Exception as e:
+            logger.info(f"OPeNDAP slice unavailable ({e}), will use standard file pipeline.")
+            return None
 
     def list_available_times(self) -> List[str]:
         """
@@ -177,6 +219,7 @@ class GEOSCFProvider(BaseNasaProvider):
                 # Atomic rename
                 temp_path.rename(final_path)
                 logger.info(f"Successfully downloaded {filename} ({final_path.stat().st_size} bytes, SHA256: {sha256.hexdigest()[:12]}...)")
+                self.cleanup_old_granules()
                 return final_path
 
             except Exception as e:
@@ -188,3 +231,33 @@ class GEOSCFProvider(BaseNasaProvider):
                     time.sleep(2 ** attempt)
 
         raise RuntimeError(f"Failed to retrieve NASA GEOS-CF granule from {remote_url} after {self.max_retries} attempts: {last_error}")
+
+    def cleanup_old_granules(self, max_files: Optional[int] = None) -> List[str]:
+        """
+        LRU Disk Retention Policy:
+        Removes oldest NetCDF files when total files exceed max_files limit.
+        Returns list of deleted file names.
+        """
+        try:
+            from ..core.config import settings
+            limit = max_files if max_files is not None else settings.MAX_RAW_FILES_TO_KEEP
+        except Exception:
+            limit = max_files or 10
+
+        files = sorted(
+            [f for f in self.raw_storage_dir.glob("GEOS.cf.ana.*.nc4") if f.is_file()],
+            key=lambda p: p.stat().st_mtime,
+        )
+
+        evicted: List[str] = []
+        if len(files) > limit:
+            to_remove = files[:-limit]
+            for f in to_remove:
+                try:
+                    logger.info(f"LRU Retention: evicting oldest raw NetCDF granule {f.name}")
+                    f.unlink()
+                    evicted.append(f.name)
+                except Exception as e:
+                    logger.warning(f"Could not delete old granule {f.name}: {e}")
+
+        return evicted
