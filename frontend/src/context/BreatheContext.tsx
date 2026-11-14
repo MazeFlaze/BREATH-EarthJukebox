@@ -1,0 +1,628 @@
+"use client";
+
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { MotionConfig } from "motion/react";
+import {
+  formatUtc,
+  galleryWorks,
+  getLayerDefinition,
+  makeSelection,
+  presetSelections,
+  timeSlots,
+} from "@/lib/breatheData";
+import { fetchBackendRegionStats, samplePolygonSeries } from "@/lib/geosCfRaster";
+import { zoomForBounds } from "@/lib/geoUtils";
+import { sonificationService } from "@/services/sonificationService";
+import type {
+  AudioCompositionSpec,
+  BasemapMode,
+  BreatheProjectFile,
+  GalleryWork,
+  GeographicSelection,
+  GeoPoint,
+  LayerKey,
+  MapCameraState,
+  RegionStats,
+  SonificationMapping,
+} from "@/types/breathe";
+
+const DEFAULT_SELECTION = presetSelections[0];
+
+const DEFAULT_MAPPING: SonificationMapping = {
+  density: 0.65,
+  brightness: 0.52,
+  pitchSensitivity: 0.58,
+  spatialSpread: 0.42,
+  tempo: 96,
+  musicalKey: "A minor",
+  waveform: "sine",
+  volume: 0.72,
+};
+
+const DEFAULT_CAMERA: MapCameraState = {
+  center: { lat: DEFAULT_SELECTION.center.lat, lon: DEFAULT_SELECTION.center.lon },
+  zoom: 2.35,
+  mode: "globe",
+  pitch: 0,
+  bearing: 0,
+};
+
+const STORAGE_KEYS = {
+  region: "breathe-selected-region",
+  savedWorks: "breathe-saved-works-v1",
+  bookmarks: "breathe-bookmarks-v1",
+};
+
+interface BreatheContextValue {
+  selection: GeographicSelection;
+  activeLayer: LayerKey;
+  basemapMode: BasemapMode;
+  layerVisible: boolean;
+  layerOpacity: number;
+  showGrid: boolean;
+  showLabels: boolean;
+  timeIndex: number;
+  camera: MapCameraState;
+  mapping: SonificationMapping;
+  regionStats: RegionStats;
+  regionSeries: number[];
+  savedWorks: GalleryWork[];
+  bookmarkedIds: string[];
+  canUndoPolygon: boolean;
+  canRedoPolygon: boolean;
+  setActiveLayer: (layer: LayerKey) => void;
+  setBasemapMode: (mode: BasemapMode) => void;
+  setLayerVisible: (visible: boolean) => void;
+  setLayerOpacity: (opacity: number) => void;
+  setShowGrid: (show: boolean) => void;
+  setShowLabels: (show: boolean) => void;
+  setTimeIndex: (index: number | ((prev: number) => number)) => void;
+  setCamera: (patch: Partial<MapCameraState> | ((prev: MapCameraState) => MapCameraState)) => void;
+  flyTo: (center: GeoPoint, zoom?: number) => void;
+  updateMapping: (patch: Partial<SonificationMapping>) => void;
+  selectPreset: (presetId: string) => void;
+  setPolygon: (
+    points: GeoPoint[],
+    name?: string,
+    sourceType?: GeographicSelection["sourceType"]
+  ) => void;
+  undoPolygon: () => void;
+  redoPolygon: () => void;
+  clearSelection: () => void;
+  loadWorkContext: (work: GalleryWork, targetMode?: "globe" | "flat") => void;
+  saveWorkToGallery: (customTitle?: string) => GalleryWork;
+  toggleBookmark: (workId: string) => void;
+  exportProjectFile: () => BreatheProjectFile;
+  importProjectFile: (data: BreatheProjectFile) => void;
+  buildCompositionSpec: (titleOverride?: string) => AudioCompositionSpec;
+}
+
+const BreatheContext = createContext<BreatheContextValue | null>(null);
+
+export function BreatheProvider({ children }: { children: React.ReactNode }) {
+  const [selectionHistory, setSelectionHistory] = useState<GeographicSelection[]>([
+    DEFAULT_SELECTION,
+  ]);
+  const [historyIndex, setHistoryIndex] = useState(0);
+  const selection = selectionHistory[historyIndex] ?? DEFAULT_SELECTION;
+
+  const [activeLayer, setActiveLayer] = useState<LayerKey>("PM25_RH35");
+  const [basemapMode, setBasemapMode] = useState<BasemapMode>("territories");
+  const [layerVisible, setLayerVisible] = useState(true);
+  const [layerOpacity, setLayerOpacity] = useState(0.76);
+  const [showGrid, setShowGrid] = useState(false);
+  const [showLabels, setShowLabels] = useState(true);
+  const [timeIndex, setTimeIndex] = useState(0);
+  const [camera, setCameraState] = useState<MapCameraState>(DEFAULT_CAMERA);
+  const [mapping, setMapping] = useState<SonificationMapping>(DEFAULT_MAPPING);
+
+  const [regionStats, setRegionStats] = useState<RegionStats>(() => ({
+    variable: "PM25_RH35",
+    unit: "µg/m³",
+    mean: null,
+    min: null,
+    max: null,
+    p90: null,
+    sampleCount: 0,
+    coveragePct: 0,
+    timestamp: timeSlots[0] ?? "2026-11-12T00:30:00Z",
+    sourceKind: "geos-cf-raster",
+    sourceLabel: "NASA GEOS-CF v2 raster-sampled",
+    isMock: false,
+    loading: true,
+  }));
+
+  const [regionSeries, setRegionSeries] = useState<number[]>([64, 68, 72, 78, 74, 69, 66, 70]);
+  const [savedWorks, setSavedWorks] = useState<GalleryWork[]>([]);
+  const [bookmarkedIds, setBookmarkedIds] = useState<string[]>(["beijing", "monsoon"]);
+  const hydratedRef = useRef(false);
+
+  // Hydrate persisted selection, saved works, bookmarks, and optional URL query context once on client
+  useEffect(() => {
+    if (hydratedRef.current || typeof window === "undefined") return;
+    hydratedRef.current = true;
+
+    try {
+      const rawRegion = window.sessionStorage.getItem(STORAGE_KEYS.region);
+      if (rawRegion) {
+        const parsed = JSON.parse(rawRegion) as Partial<GeographicSelection>;
+        if (Array.isArray(parsed.polygon) && parsed.polygon.length >= 3) {
+          const restored = makeSelection(
+            parsed.id ?? "custom-region",
+            parsed.name ?? "Custom atmospheric region",
+            parsed.polygon,
+            parsed.sourceType ?? "custom"
+          );
+          setSelectionHistory([restored]);
+          setHistoryIndex(0);
+        }
+      }
+      const rawSaved = window.localStorage.getItem(STORAGE_KEYS.savedWorks);
+      if (rawSaved) {
+        const parsed = JSON.parse(rawSaved) as GalleryWork[];
+        if (Array.isArray(parsed)) setSavedWorks(parsed);
+      }
+      const rawBookmarks = window.localStorage.getItem(STORAGE_KEYS.bookmarks);
+      if (rawBookmarks) {
+        const parsed = JSON.parse(rawBookmarks) as string[];
+        if (Array.isArray(parsed)) setBookmarkedIds(parsed);
+      }
+    } catch {
+      // Ignore corrupt browser storage cleanly
+    }
+
+    // Optional share link restoration (?work=id or ?region=id&layer=...&t=...)
+    const params = new URLSearchParams(window.location.search);
+    const workId = params.get("work");
+    const regionId = params.get("region");
+    const layerParam = params.get("layer") as LayerKey | null;
+    const tParam = params.get("t");
+    const tempoParam = params.get("tempo");
+    const keyParam = params.get("key");
+
+    if (workId) {
+      const work = galleryWorks.find((item) => item.id === workId);
+      if (work) {
+        const nextSel = makeSelection(work.regionId, work.region, work.polygon, "gallery");
+        setSelectionHistory([nextSel]);
+        setHistoryIndex(0);
+        setActiveLayer(work.variable);
+        setTimeIndex(Math.max(0, Math.min(timeSlots.length - 1, work.timeIndex)));
+        setMapping((prev) => ({
+          ...prev,
+          density: work.mappings.density,
+          brightness: work.mappings.brightness,
+          pitchSensitivity: work.mappings.pitchSensitivity,
+          spatialSpread: work.mappings.spatialSpread,
+          tempo: work.tempo,
+          musicalKey: work.musicalKey,
+        }));
+        setCameraState((prev) => ({ ...prev, center: work.center, zoom: work.zoom }));
+        return;
+      }
+    }
+
+    if (regionId) {
+      const preset = presetSelections.find((item) => item.id === regionId);
+      if (preset) {
+        setSelectionHistory([preset]);
+        setHistoryIndex(0);
+        setCameraState((prev) => ({
+          ...prev,
+          center: preset.center,
+          zoom: zoomForBounds(preset.bounds),
+        }));
+      }
+    }
+    if (layerParam && ["PM25_RH35", "AOD", "NO2", "SO2", "CO", "O3"].includes(layerParam)) {
+      setActiveLayer(layerParam);
+    }
+    if (tParam !== null && !Number.isNaN(Number(tParam))) {
+      setTimeIndex(Math.max(0, Math.min(timeSlots.length - 1, Number(tParam))));
+    }
+    if (tempoParam !== null && !Number.isNaN(Number(tempoParam))) {
+      setMapping((prev) => ({ ...prev, tempo: Math.max(54, Math.min(160, Number(tempoParam))) }));
+    }
+    if (keyParam) {
+      setMapping((prev) => ({ ...prev, musicalKey: keyParam }));
+    }
+  }, []);
+
+  // Persist current region to sessionStorage
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.sessionStorage.setItem(STORAGE_KEYS.region, JSON.stringify(selection));
+    } catch {
+      // Ignore quota errors
+    }
+  }, [selection]);
+
+  // Query live backend / GEOS-CF raster stats for the current polygon + active variable + timestamp
+  useEffect(() => {
+    let cancelled = false;
+    if (selection.polygon.length < 3) return;
+
+    setRegionStats((prev) => ({
+      ...prev,
+      variable: activeLayer,
+      unit: getLayerDefinition(activeLayer).unit,
+      loading: true,
+    }));
+
+    void fetchBackendRegionStats(
+      activeLayer,
+      timeIndex,
+      selection.bounds,
+      selection.polygon
+    ).then((stats) => {
+      if (!cancelled) setRegionStats(stats);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selection.polygon, selection.bounds, activeLayer, timeIndex]);
+
+  // Sample diurnal 8-step atmospheric time series across the current polygon & active variable
+  useEffect(() => {
+    let cancelled = false;
+    if (selection.polygon.length < 3) return;
+
+    void samplePolygonSeries(activeLayer, selection.polygon).then((series) => {
+      if (!cancelled && series.length > 0) {
+        setRegionSeries(series);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selection.polygon, activeLayer]);
+
+  const setCamera = useCallback(
+    (patch: Partial<MapCameraState> | ((prev: MapCameraState) => MapCameraState)) => {
+      setCameraState((prev) => (typeof patch === "function" ? patch(prev) : { ...prev, ...patch }));
+    },
+    []
+  );
+
+  const flyTo = useCallback((center: GeoPoint, zoom?: number) => {
+    setCameraState((prev) => ({
+      ...prev,
+      center,
+      zoom: zoom ?? prev.zoom,
+    }));
+  }, []);
+
+  const pushSelection = useCallback(
+    (next: GeographicSelection) => {
+      setSelectionHistory((prev) => {
+        const sliced = prev.slice(0, historyIndex + 1);
+        const updated = [...sliced, next];
+        setHistoryIndex(updated.length - 1);
+        return updated;
+      });
+    },
+    [historyIndex]
+  );
+
+  const selectPreset = useCallback(
+    (presetId: string) => {
+      const found = presetSelections.find((p) => p.id === presetId);
+      if (!found) return;
+      pushSelection(found);
+      setCameraState((prev) => ({
+        ...prev,
+        center: found.center,
+        zoom: zoomForBounds(found.bounds),
+      }));
+    },
+    [pushSelection]
+  );
+
+  const setPolygon = useCallback(
+    (
+      points: GeoPoint[],
+      name?: string,
+      sourceType: GeographicSelection["sourceType"] = "custom"
+    ) => {
+      if (points.length < 3) return;
+      const next = makeSelection(
+        `custom-${Date.now()}`,
+        name ?? "Custom drawn region",
+        points,
+        sourceType
+      );
+      pushSelection(next);
+    },
+    [pushSelection]
+  );
+
+  const undoPolygon = useCallback(() => {
+    setHistoryIndex((idx) => Math.max(0, idx - 1));
+  }, []);
+
+  const redoPolygon = useCallback(() => {
+    setHistoryIndex((idx) => Math.min(selectionHistory.length - 1, idx + 1));
+  }, [selectionHistory.length]);
+
+  const clearSelection = useCallback(() => {
+    const empty: GeographicSelection = {
+      id: "cleared",
+      name: "No region selected",
+      polygon: [],
+      bounds: selection.bounds,
+      areaKm2: 0,
+      center: selection.center,
+      sourceType: "custom",
+    };
+    pushSelection(empty);
+  }, [pushSelection, selection.bounds, selection.center]);
+
+  const updateMapping = useCallback((patch: Partial<SonificationMapping>) => {
+    setMapping((prev) => {
+      const next = { ...prev, ...patch };
+      if (patch.volume !== undefined) sonificationService.setVolume(patch.volume);
+      if (patch.waveform !== undefined) sonificationService.setWaveform(patch.waveform);
+      return next;
+    });
+  }, []);
+
+  const buildCompositionSpec = useCallback(
+    (titleOverride?: string): AudioCompositionSpec => {
+      const layerDef = getLayerDefinition(activeLayer);
+      return {
+        id: `${selection.id}-${activeLayer}-${timeIndex}`,
+        title: titleOverride ?? `${selection.name} · ${layerDef.short}`,
+        regionName: selection.name,
+        variable: activeLayer,
+        series: regionSeries,
+        min: layerDef.vmin,
+        max: layerDef.vmax,
+        mapping,
+        durationSec: 30,
+      };
+    },
+    [selection.id, selection.name, activeLayer, timeIndex, regionSeries, mapping]
+  );
+
+  // Keep Web Audio synthesizer + preview schedule synchronized live with mapping changes
+  useEffect(() => {
+    const spec = buildCompositionSpec();
+    sonificationService.syncPreviewSpec(spec);
+  }, [buildCompositionSpec]);
+
+  const loadWorkContext = useCallback(
+    (work: GalleryWork, targetMode?: "globe" | "flat") => {
+      const next = makeSelection(work.regionId, work.region, work.polygon, "gallery");
+      pushSelection(next);
+      setActiveLayer(work.variable);
+      setTimeIndex(Math.max(0, Math.min(timeSlots.length - 1, work.timeIndex)));
+      setMapping((prev) => ({
+        ...prev,
+        density: work.mappings.density,
+        brightness: work.mappings.brightness,
+        pitchSensitivity: work.mappings.pitchSensitivity,
+        spatialSpread: work.mappings.spatialSpread,
+        tempo: work.tempo,
+        musicalKey: work.musicalKey,
+      }));
+      setCameraState((prev) => ({
+        ...prev,
+        center: work.center,
+        zoom: work.zoom,
+        mode: targetMode ?? prev.mode,
+      }));
+      if (work.seriesPreview.length > 0) {
+        setRegionSeries(work.seriesPreview);
+      }
+    },
+    [pushSelection]
+  );
+
+  const saveWorkToGallery = useCallback(
+    (customTitle?: string): GalleryWork => {
+      const layerDef = getLayerDefinition(activeLayer);
+      const timestamp = timeSlots[timeIndex] ?? timeSlots[0];
+      const newWork: GalleryWork = {
+        id: `work-${Date.now()}`,
+        title: customTitle?.trim() || `${selection.name} (${layerDef.short})`,
+        creator: "Saved in Studio",
+        regionId: selection.id,
+        region: selection.name,
+        polygon: selection.polygon,
+        center: selection.center,
+        zoom: Math.max(2.6, zoomForBounds(selection.bounds)),
+        variable: activeLayer,
+        timeIndex,
+        timeRangeLabel: formatUtc(timestamp),
+        duration: "00:30",
+        tempo: mapping.tempo,
+        musicalKey: mapping.musicalKey,
+        mappings: {
+          density: mapping.density,
+          brightness: mapping.brightness,
+          pitchSensitivity: mapping.pitchSensitivity,
+          spatialSpread: mapping.spatialSpread,
+        },
+        seriesPreview: regionSeries.slice(),
+        description: `User composition for ${selection.name} mapped from NASA GEOS-CF v2 ${layerDef.short} (${layerDef.unit}).`,
+        dataSource: regionStats.sourceLabel,
+        isIllustrative: false,
+        isUserSaved: true,
+      };
+      setSavedWorks((prev) => {
+        const next = [newWork, ...prev];
+        try {
+          window.localStorage.setItem(STORAGE_KEYS.savedWorks, JSON.stringify(next));
+        } catch {
+          // Ignore storage quota failure
+        }
+        return next;
+      });
+      return newWork;
+    },
+    [activeLayer, timeIndex, selection, mapping, regionSeries, regionStats.sourceLabel]
+  );
+
+  const toggleBookmark = useCallback((workId: string) => {
+    setBookmarkedIds((prev) => {
+      const next = prev.includes(workId) ? prev.filter((id) => id !== workId) : [...prev, workId];
+      try {
+        window.localStorage.setItem(STORAGE_KEYS.bookmarks, JSON.stringify(next));
+      } catch {
+        // Ignore storage failure
+      }
+      return next;
+    });
+  }, []);
+
+  const exportProjectFile = useCallback((): BreatheProjectFile => {
+    return {
+      version: "2.0",
+      name: selection.name,
+      polygon: selection.polygon,
+      layer: activeLayer,
+      timeIndex,
+      tempo: mapping.tempo,
+      key: mapping.musicalKey,
+      waveform: mapping.waveform,
+      mappings: [
+        Math.round(mapping.density * 100),
+        Math.round(mapping.brightness * 100),
+        Math.round(mapping.pitchSensitivity * 100),
+        Math.round(mapping.spatialSpread * 100),
+      ],
+    };
+  }, [selection, activeLayer, timeIndex, mapping]);
+
+  const importProjectFile = useCallback(
+    (data: BreatheProjectFile) => {
+      if (Array.isArray(data.polygon) && data.polygon.length >= 3) {
+        const next = makeSelection("imported", data.name || "Imported Region", data.polygon, "custom");
+        pushSelection(next);
+        setCameraState((prev) => ({
+          ...prev,
+          center: next.center,
+          zoom: zoomForBounds(next.bounds),
+        }));
+      }
+      if (data.layer) setActiveLayer(data.layer);
+      if (typeof data.timeIndex === "number") {
+        setTimeIndex(Math.max(0, Math.min(timeSlots.length - 1, data.timeIndex)));
+      }
+      const m = data.mappings ?? [];
+      setMapping((prev) => ({
+        ...prev,
+        tempo: typeof data.tempo === "number" ? data.tempo : prev.tempo,
+        musicalKey: data.key || prev.musicalKey,
+        waveform: data.waveform || prev.waveform,
+        density: typeof m[0] === "number" ? Math.max(0, Math.min(1, m[0] / 100)) : prev.density,
+        brightness: typeof m[1] === "number" ? Math.max(0, Math.min(1, m[1] / 100)) : prev.brightness,
+        pitchSensitivity:
+          typeof m[2] === "number" ? Math.max(0, Math.min(1, m[2] / 100)) : prev.pitchSensitivity,
+        spatialSpread:
+          typeof m[3] === "number" ? Math.max(0, Math.min(1, m[3] / 100)) : prev.spatialSpread,
+      }));
+    },
+    [pushSelection]
+  );
+
+  const value = useMemo<BreatheContextValue>(
+    () => ({
+      selection,
+      activeLayer,
+      basemapMode,
+      layerVisible,
+      layerOpacity,
+      showGrid,
+      showLabels,
+      timeIndex,
+      camera,
+      mapping,
+      regionStats,
+      regionSeries,
+      savedWorks,
+      bookmarkedIds,
+      canUndoPolygon: historyIndex > 0,
+      canRedoPolygon: historyIndex < selectionHistory.length - 1,
+      setActiveLayer,
+      setBasemapMode,
+      setLayerVisible,
+      setLayerOpacity,
+      setShowGrid,
+      setShowLabels,
+      setTimeIndex,
+      setCamera,
+      flyTo,
+      updateMapping,
+      selectPreset,
+      setPolygon,
+      undoPolygon,
+      redoPolygon,
+      clearSelection,
+      loadWorkContext,
+      saveWorkToGallery,
+      toggleBookmark,
+      exportProjectFile,
+      importProjectFile,
+      buildCompositionSpec,
+    }),
+    [
+      selection,
+      activeLayer,
+      basemapMode,
+      layerVisible,
+      layerOpacity,
+      showGrid,
+      showLabels,
+      timeIndex,
+      camera,
+      mapping,
+      regionStats,
+      regionSeries,
+      savedWorks,
+      bookmarkedIds,
+      historyIndex,
+      selectionHistory.length,
+      setCamera,
+      flyTo,
+      updateMapping,
+      selectPreset,
+      setPolygon,
+      undoPolygon,
+      redoPolygon,
+      clearSelection,
+      loadWorkContext,
+      saveWorkToGallery,
+      toggleBookmark,
+      exportProjectFile,
+      importProjectFile,
+      buildCompositionSpec,
+    ]
+  );
+
+  return (
+    <MotionConfig reducedMotion="user">
+      <BreatheContext.Provider value={value}>{children}</BreatheContext.Provider>
+    </MotionConfig>
+  );
+}
+
+export function useBreathe() {
+  const ctx = useContext(BreatheContext);
+  if (!ctx) {
+    throw new Error("useBreathe must be used within BreatheProvider");
+  }
+  return ctx;
+}
+
