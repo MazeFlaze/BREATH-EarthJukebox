@@ -44,7 +44,8 @@ def root():
         "description": "Scientific API serving atmospheric Earth observations for interactive sonification.",
         "documentation": "/docs",
         "health": "/api/v1/health",
-        "observations": "/api/v1/observations/aod",
+        "air_quality": "/api/v1/observations/air-quality",
+        "aod": "/api/v1/observations/aod",
     }
 
 
