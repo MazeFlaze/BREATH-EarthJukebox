@@ -115,16 +115,16 @@ export default function LandingPage() {
               </span>
             </Link>
 
-            {/* Top Bar - Less rounded corners, attached to the right, wider item spacing */}
+            {/* Top Bar - Extended horizontal width */}
             <nav
               aria-label="Quick Navigation"
-              className="liquid-glass rounded-xl sm:rounded-2xl px-4 sm:px-6 py-2 sm:py-2.5 flex items-center gap-4 sm:gap-6 border border-white/15 shadow-[inset_0_1px_2px_rgba(255,255,255,0.25),0_6px_25px_rgba(0,0,0,0.5)] backdrop-blur-2xl bg-white/[0.06] shrink-0"
+              className="liquid-glass rounded-xl sm:rounded-2xl px-6 sm:px-10 py-2 sm:py-2.5 flex items-center justify-between gap-6 sm:gap-10 min-w-[280px] sm:min-w-[360px] border border-white/15 shadow-[inset_0_1px_2px_rgba(255,255,255,0.25),0_6px_25px_rgba(0,0,0,0.5)] backdrop-blur-2xl bg-white/[0.06] shrink-0"
             >
               {/* Experience Button */}
               <button
                 type="button"
                 onClick={() => setActiveModal('experience')}
-                className="px-4 py-1.5 rounded-lg text-sm sm:text-base font-medium text-white/90 hover:text-white hover:bg-white/15 transition-all cursor-pointer whitespace-nowrap"
+                className="px-5 py-1.5 rounded-lg text-sm sm:text-base font-medium text-white/90 hover:text-white hover:bg-white/15 transition-all cursor-pointer whitespace-nowrap text-center"
               >
                 Experience
               </button>
@@ -133,7 +133,7 @@ export default function LandingPage() {
               <button
                 type="button"
                 onClick={() => setActiveModal('about')}
-                className="px-4 py-1.5 rounded-lg text-sm sm:text-base font-medium text-white/90 hover:text-white hover:bg-white/15 transition-all cursor-pointer whitespace-nowrap"
+                className="px-5 py-1.5 rounded-lg text-sm sm:text-base font-medium text-white/90 hover:text-white hover:bg-white/15 transition-all cursor-pointer whitespace-nowrap text-center"
               >
                 About
               </button>
@@ -143,9 +143,9 @@ export default function LandingPage() {
                 type="button"
                 onClick={() => setActiveModal('menu')}
                 aria-label="Open navigation menu"
-                className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center text-white/80 hover:text-white hover:bg-white/15 transition-all cursor-pointer shrink-0"
+                className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center text-white/80 hover:text-white hover:bg-white/15 transition-all cursor-pointer shrink-0"
               >
-                <Menu className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                <Menu className="w-5 h-5 text-white" />
               </button>
             </nav>
           </header>
