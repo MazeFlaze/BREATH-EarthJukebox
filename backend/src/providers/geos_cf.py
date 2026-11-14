@@ -74,16 +74,19 @@ class GEOSCFProvider(BaseNasaProvider):
         raw_storage_dir: Optional[Path] = None,
         timeout_seconds: int = 60,
         max_retries: int = 3,
+        preserve_raw: bool = False,
     ):
         self.portal_url = (portal_url or self.DEFAULT_PORTAL_URL).rstrip("/")
         self.opendap_url = (opendap_url or self.DEFAULT_OPENDAP_URL).rstrip("/")
         self.product = product or self.DEFAULT_PRODUCT
         if raw_storage_dir is None:
-            raw_storage_dir = Path(__file__).resolve().parent.parent / "data" / "raw"
+            from ..core.config import settings
+            raw_storage_dir = settings.DATA_STORAGE_ROOT
         self.raw_storage_dir = raw_storage_dir
         self.raw_storage_dir.mkdir(parents=True, exist_ok=True)
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
+        self.preserve_raw = preserve_raw
 
     def get_source_metadata(self) -> Dict[str, Any]:
         """Returns GMAO GEOS-CF v2 metadata."""
@@ -191,12 +194,16 @@ class GEOSCFProvider(BaseNasaProvider):
         dest_dir.mkdir(parents=True, exist_ok=True)
         final_path = dest_dir / filename
 
-        # Return existing file if valid size (>1MB)
-        if final_path.exists() and final_path.stat().st_size > 1024 * 1024:
-            logger.info(f"Using cached local GEOS-CF file: {final_path}")
-            return final_path
-
         remote_url = self.build_remote_url(dt)
+        from .geos_cf_provenance import checksum_file, inspect_asset, valid_receipt, write_receipt
+        if final_path.exists():
+            try:
+                info = inspect_asset(final_path)
+                if valid_receipt(final_path, checksum_file(final_path), info["timestamp_utc"], remote_url):
+                    logger.info(f"Using validated cached GEOS-CF file: {final_path}")
+                    return final_path
+            except (ValueError, OSError):
+                pass
         temp_path = dest_dir / f"{filename}.tmp"
         logger.info(f"Fetching NASA GEOS-CF granule from: {remote_url}")
 
@@ -210,16 +217,37 @@ class GEOSCFProvider(BaseNasaProvider):
                             # Try alternative revision R1 or raise not found
                             raise FileNotFoundError(f"NASA granule not found at upstream: {remote_url}")
                         response.raise_for_status()
+                        total = int(response.headers.get("content-length", 0))
+                        received = 0
+                        last_report = 0.0
 
                         with open(temp_path, "wb") as f:
                             for chunk in response.iter_bytes(chunk_size=65536):
                                 f.write(chunk)
                                 sha256.update(chunk)
+                                received += len(chunk)
+                                now = time.monotonic()
+                                if now - last_report >= 1:
+                                    label = f"{received * 100 / total:.1f}%" if total else "size unknown"
+                                    print(f"  {filename}: {received / 1048576:.2f} MiB ({label})", flush=True)
+                                    last_report = now
 
                 # Atomic rename
-                temp_path.rename(final_path)
+                # Validate before replacing an existing cache entry. inspect_asset needs the real filename.
+                validation_dir = dest_dir / ".validation"
+                validation_dir.mkdir(exist_ok=True)
+                candidate = validation_dir / filename
+                temp_path.replace(candidate)
+                try:
+                    write_receipt(candidate, remote_url)
+                    candidate.replace(final_path)
+                    candidate.with_name(candidate.name + ".source.json").replace(final_path.with_name(filename + ".source.json"))
+                finally:
+                    candidate.unlink(missing_ok=True)
+                    candidate.with_name(candidate.name + ".source.json").unlink(missing_ok=True)
                 logger.info(f"Successfully downloaded {filename} ({final_path.stat().st_size} bytes, SHA256: {sha256.hexdigest()[:12]}...)")
-                self.cleanup_old_granules()
+                if not self.preserve_raw:
+                    self.cleanup_old_granules()
                 return final_path
 
             except Exception as e:
@@ -238,11 +266,15 @@ class GEOSCFProvider(BaseNasaProvider):
         Removes oldest NetCDF files when total files exceed max_files limit.
         Returns list of deleted file names.
         """
+        if self.preserve_raw:
+            return []
         try:
             from ..core.config import settings
             limit = max_files if max_files is not None else settings.MAX_RAW_FILES_TO_KEEP
         except Exception:
             limit = max_files or 10
+        if limit < 1:
+            raise ValueError("Retention limit must be positive; use preserve_raw to disable eviction")
 
         files = sorted(
             [f for f in self.raw_storage_dir.glob("GEOS.cf.ana.*.nc4") if f.is_file()],

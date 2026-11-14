@@ -37,7 +37,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 _db_initialized = False
 
 
-def init_db() -> None:
+def init_db(bootstrap_raw: bool = True) -> None:
     """Initializes tables and seeds preset locations if they do not exist."""
     global _db_initialized
     from ..models.entities import Location, PRESET_LOCATIONS
@@ -56,7 +56,7 @@ def init_db() -> None:
         # Auto-bootstrap existing local NetCDF granules in DATA_STORAGE_ROOT
         from ..models.entities import DatasetAsset
         asset_count = session.query(DatasetAsset).count()
-        if asset_count == 0:
+        if bootstrap_raw and asset_count == 0:
             raw_dir = settings.DATA_STORAGE_ROOT
             if raw_dir.exists():
                 from ..services.ingestion_service import ingestion_service

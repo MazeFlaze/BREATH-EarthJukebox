@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     # Data Storage Root for NetCDF files
     DATA_STORAGE_ROOT: Path = Path(__file__).resolve().parent.parent / "data" / "raw"
+    NASA_ARCHIVE_ROOT: Path = Path(__file__).resolve().parent.parent / "data" / "nasa-archive"
 
     # NASA GEOS-CF Product Configuration
     NASA_PROVIDER: str = "NASA GMAO"

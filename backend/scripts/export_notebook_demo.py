@@ -7,13 +7,11 @@ import argparse
 import json
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 
 from backend.src.api.schemas.notebook_demo_schema import NotebookDemoContract
 from backend.src.processors.notebook_demo_processor import NotebookDemoProcessor
+from backend.src.processors.notebook_demo_maps import render_maps
 from backend.src.services.ingestion_service import IngestionService
 
 
@@ -55,18 +53,7 @@ def main() -> None:
     if args.reference:
         compare_reference(contract, args.reference)
         print("PASS: 192 events match notebook values, pulses, quality counts and frozen music plans")
-    args.output.mkdir(parents=True, exist_ok=True)
-    for key, field in fields.items():
-        # Fixed georeferenced extent; no labels, padding, or crop on the web map.
-        fig = plt.figure(figsize=(12, 6), dpi=120)
-        ax = fig.add_axes((0, 0, 1, 1))
-        ax.set_facecolor("#070b14")
-        ax.pcolormesh(field.lon, field.lat, field.values, cmap="viridis", vmin=0,
-                      vmax=contract.pollutants[key].display_max, shading="auto", rasterized=True)
-        ax.set(xlim=(-180, 180), ylim=(-90, 90))
-        ax.set_axis_off()
-        fig.savefig(args.output / f"{key}.png", facecolor="#070b14")
-        plt.close(fig)
+    render_maps(contract, fields, args.output)
     path = args.output / "contract.json"
     path.write_text(contract.model_dump_json(indent=2), encoding="utf-8")
     print(f"Exported validated {contract.schema_version}: {path}; isMock={contract.isMock}")
