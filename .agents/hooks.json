@@ -1,0 +1,25 @@
+{
+  "context-guard": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "echo '[Agent Context Guard] Active Rules: Scientific Integrity (AOD != AQI) | Dual-Stack (FastAPI & Next.js) | Test Verification Before Complete'",
+        "timeout": 5
+      }
+    ]
+  },
+  "safety-gate": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c 'import sys; cmd = sys.argv[1] if len(sys.argv) > 1 else \"\"; sys.exit(1 if any(b in cmd for b in [\"rm -rf /\", \"git push --force\"]) else 0)'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
