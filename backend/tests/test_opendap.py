@@ -5,9 +5,11 @@ import pytest
 try:
     from backend.src.providers.geos_cf import GEOSCFProvider
     from backend.src.core.config import settings
+    from backend.src.processors.netcdf_processor import NetCDFProcessor
 except ImportError:
     from src.providers.geos_cf import GEOSCFProvider
     from src.core.config import settings
+    from src.processors.netcdf_processor import NetCDFProcessor
 
 
 def test_build_opendap_url():
@@ -42,12 +44,7 @@ def test_extract_point_opendap_mocked_success():
             mock_ds = MagicMock()
             mock_open.return_value.__enter__.return_value = mock_ds
 
-            try:
-                patch_target = "src.processors.netcdf_processor.NetCDFProcessor.extract_point_value"
-            except Exception:
-                patch_target = "backend.src.processors.netcdf_processor.NetCDFProcessor.extract_point_value"
-
-            with patch(patch_target, return_value=mock_pt_data):
+            with patch.object(NetCDFProcessor, "extract_point_value", return_value=mock_pt_data):
                 res = provider.extract_point_opendap(test_dt, 21.03, 105.85, "PM25_RH35")
 
                 assert res is not None

@@ -6,7 +6,8 @@
     "targetVariable": "Surface Particulate Matter (PM2.5)",
     "unit": "µg/m³",
     "version": "1.0.0-prototype-svs",
-    "generatedAt": "2026-11-14T06:14:32.487170+00:00"
+    "generatedAt": "2026-11-14T06:14:32.487170+00:00",
+    "offlineMapManifest": "/images/geos-cf/manifest.json"
   },
   "dataset": {
     "id": "nasa-svs5533-geos-cf-2024",
@@ -36,7 +37,8 @@
           "instrument": "MODIS & VIIRS / GEOS-CF Model Assimilation",
           "processingLevel": "Level 4 Global Assimilation (c24 / ~25km)",
           "citationUrl": "https://svs.gsfc.nasa.gov/5533"
-        }
+        },
+        "offlineImageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_0030z.png"
       },
       {
         "id": "geos-cf-2024-07-22-002",
@@ -57,7 +59,8 @@
           "instrument": "MODIS & VIIRS / GEOS-CF Model Assimilation",
           "processingLevel": "Level 4 Global Assimilation (c24 / ~25km)",
           "citationUrl": "https://svs.gsfc.nasa.gov/5533"
-        }
+        },
+        "offlineImageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_0330z.png"
       },
       {
         "id": "geos-cf-2024-07-24-003",
@@ -78,7 +81,8 @@
           "instrument": "MODIS & VIIRS / GEOS-CF Model Assimilation",
           "processingLevel": "Level 4 Global Assimilation (c24 / ~25km)",
           "citationUrl": "https://svs.gsfc.nasa.gov/5533"
-        }
+        },
+        "offlineImageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_0630z.png"
       },
       {
         "id": "geos-cf-2024-07-26-004",
@@ -99,7 +103,8 @@
           "instrument": "MODIS & VIIRS / GEOS-CF Model Assimilation",
           "processingLevel": "Level 4 Global Assimilation (c24 / ~25km)",
           "citationUrl": "https://svs.gsfc.nasa.gov/5533"
-        }
+        },
+        "offlineImageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_0930z.png"
       },
       {
         "id": "geos-cf-2024-07-29-005",
@@ -120,7 +125,8 @@
           "instrument": "MODIS & VIIRS / GEOS-CF Model Assimilation",
           "processingLevel": "Level 4 Global Assimilation (c24 / ~25km)",
           "citationUrl": "https://svs.gsfc.nasa.gov/5533"
-        }
+        },
+        "offlineImageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_1230z.png"
       },
       {
         "id": "geos-cf-2024-08-03-006",
@@ -141,7 +147,8 @@
           "instrument": "MODIS & VIIRS / GEOS-CF Model Assimilation",
           "processingLevel": "Level 4 Global Assimilation (c24 / ~25km)",
           "citationUrl": "https://svs.gsfc.nasa.gov/5533"
-        }
+        },
+        "offlineImageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_1530z.png"
       },
       {
         "id": "geos-cf-2024-08-08-007",
@@ -162,7 +169,8 @@
           "instrument": "MODIS & VIIRS / GEOS-CF Model Assimilation",
           "processingLevel": "Level 4 Global Assimilation (c24 / ~25km)",
           "citationUrl": "https://svs.gsfc.nasa.gov/5533"
-        }
+        },
+        "offlineImageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_1830z.png"
       },
       {
         "id": "geos-cf-2024-08-16-008",
@@ -183,7 +191,8 @@
           "instrument": "MODIS & VIIRS / GEOS-CF Model Assimilation",
           "processingLevel": "Level 4 Global Assimilation (c24 / ~25km)",
           "citationUrl": "https://svs.gsfc.nasa.gov/5533"
-        }
+        },
+        "offlineImageUrl": "/images/geos-cf/geos_cf_PM25_RH35_20261112_2130z.png"
       }
     ],
     "isMock": true,
