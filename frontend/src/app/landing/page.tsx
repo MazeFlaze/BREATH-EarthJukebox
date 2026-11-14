@@ -220,8 +220,8 @@ export default function LandingPage() {
         </section>
 
         {/* Right Panel */}
-        <aside className="hidden lg:flex min-h-[100svh] flex-col justify-start items-end pt-5 sm:pt-6 lg:pt-8 pr-[40px] pl-6 pb-12 w-[48%]">
-          {/* Top Bar - Placed at 40px from the right edge */}
+        <aside className="hidden lg:flex min-h-[100svh] flex-col justify-start items-end pt-5 sm:pt-6 lg:pt-8 pr-[200px] pl-6 pb-12 w-[48%]">
+          {/* Top Bar - Placed at 200px from the right edge */}
           <nav
             aria-label="Quick Navigation"
             className="liquid-glass rounded-xl sm:rounded-2xl px-6 sm:px-10 py-2 sm:py-2.5 flex items-center justify-between gap-6 sm:gap-10 min-w-[280px] sm:min-w-[360px] border border-white/15 shadow-[inset_0_1px_2px_rgba(255,255,255,0.25),0_6px_25px_rgba(0,0,0,0.5)] backdrop-blur-2xl bg-white/[0.06] shrink-0 -mt-1 sm:-mt-2"
