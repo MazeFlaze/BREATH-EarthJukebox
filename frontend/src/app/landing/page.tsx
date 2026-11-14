@@ -104,7 +104,7 @@ export default function LandingPage() {
           />
 
           {/* Navigation inside Left Panel */}
-          <header className="relative z-10 flex items-center justify-start gap-3 sm:gap-5 -mt-1 sm:-mt-2">
+          <header className="relative z-10 flex items-center justify-between gap-4 -mt-1 sm:-mt-2">
             <Link
               href="/"
               className="flex items-center gap-2.5 hover:scale-105 active:scale-95 transition-transform shrink-0"
@@ -115,10 +115,10 @@ export default function LandingPage() {
               </span>
             </Link>
 
-            {/* Pill Capsule Top Bar - Bigger, shifted up & to the left */}
+            {/* Pill Capsule Top Bar - Shifted to right side */}
             <nav
               aria-label="Quick Navigation"
-              className="liquid-glass rounded-full px-3 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 sm:gap-3 border border-white/15 shadow-[inset_0_1px_2px_rgba(255,255,255,0.25),0_6px_25px_rgba(0,0,0,0.5)] backdrop-blur-2xl bg-white/[0.06]"
+              className="liquid-glass rounded-full px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 sm:gap-3 border border-white/15 shadow-[inset_0_1px_2px_rgba(255,255,255,0.25),0_6px_25px_rgba(0,0,0,0.5)] backdrop-blur-2xl bg-white/[0.06] shrink-0"
             >
               {/* Inner glowing sphere / indicator dot */}
               <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-b from-white/35 via-white/10 to-transparent shadow-[inset_0_1px_2px_rgba(255,255,255,0.5),0_2px_4px_rgba(0,0,0,0.6)] border border-white/25 flex items-center justify-center shrink-0">
