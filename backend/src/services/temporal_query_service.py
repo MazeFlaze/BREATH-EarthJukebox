@@ -139,15 +139,21 @@ class TemporalQueryService:
             start_time=start_dt,
             end_time=end_dt,
         )
-        db_samples_by_time = {
-            s.timestamp_utc: s for s in existing_db_samples if s.value is not None
-        }
+        db_samples_by_time = {}
+        for s in existing_db_samples:
+            if s.value is not None:
+                t_val = s.timestamp_utc
+                if t_val.tzinfo is None:
+                    t_val = t_val.replace(tzinfo=timezone.utc)
+                iso_k = t_val.strftime("%Y-%m-%dT%H:%M:%SZ")
+                db_samples_by_time[iso_k] = s
 
         # Gather available hourly files covering any missing hours
         files_by_dt = {}
         for h_dt in expected_hours:
             py_dt = h_dt.to_pydatetime()
-            if py_dt not in db_samples_by_time:
+            iso_check = py_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+            if iso_check not in db_samples_by_time:
                 expected_fn = self.provider.format_granule_filename(py_dt)
                 local_file = settings.DATA_STORAGE_ROOT / expected_fn
                 if local_file.exists():
@@ -177,8 +183,8 @@ class TemporalQueryService:
             iso_time = py_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
             # Check if sample exists in database read-through cache
-            if py_dt in db_samples_by_time:
-                db_sample = db_samples_by_time[py_dt]
+            if iso_time in db_samples_by_time:
+                db_sample = db_samples_by_time[iso_time]
                 val = db_sample.value
                 norm_val = ObservationNormalizer.normalize(variable, val)
                 points.append(
