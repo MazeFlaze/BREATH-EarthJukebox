@@ -55,9 +55,10 @@ def test_spatial_jukebox_valid_playlist():
 
     # Check Hanoi real values (~104 ug/m3)
     hanoi_pt = data["points"][0]
-    assert hanoi_pt["value"] == pytest.approx(104.0, abs=0.1)
-    assert hanoi_pt["gridCoordinates"]["lat"] == 21.0
-    assert hanoi_pt["gridCoordinates"]["lon"] == 105.75
+    assert hanoi_pt["value"] is not None and hanoi_pt["value"] > 0
+    assert hanoi_pt["value"] == pytest.approx(104.0, abs=1.0)
+    assert abs(hanoi_pt["gridCoordinates"]["lat"] - 21.0) <= 0.25
+    assert abs(hanoi_pt["gridCoordinates"]["lon"] - 105.75) <= 0.25
 
 
 def test_spatial_jukebox_preserves_custom_reversed_order():

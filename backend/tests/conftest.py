@@ -29,11 +29,11 @@ def setup_test_environment():
 
     if not sample_file.exists():
         times = pd.date_range("2026-11-13 01:30:00", periods=1)
-        lats = np.array([-90.0, 1.35, 13.75, 21.03, 35.68, 90.0], dtype=np.float32)
-        lons = np.array([-180.0, 100.5, 103.82, 105.85, 139.69, 180.0], dtype=np.float32)
+        lats = np.array([-90.0, 1.25, 13.75, 21.0, 35.75, 90.0], dtype=np.float32)
+        lons = np.array([-180.0, 100.5, 103.75, 105.75, 139.75, 180.0], dtype=np.float32)
 
         data_shape = (1, len(lats), len(lons))
-        pm25 = np.full(data_shape, 28.5, dtype=np.float32)
+        pm25 = np.full(data_shape, 104.0, dtype=np.float32)
         pm10 = np.full(data_shape, 45.0, dtype=np.float32)
         co = np.full(data_shape, 1.8e-7, dtype=np.float32)
         no2 = np.full(data_shape, 1.2e-8, dtype=np.float32)
