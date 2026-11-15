@@ -193,6 +193,8 @@ export default function GalleryPage() {
                       center={work.center}
                       zoom={work.zoom}
                       polygon={work.polygon}
+                      boundaryGeometry={work.boundaryGeometry}
+                      territoryCode={work.territoryCode}
                       variable={work.variable}
                       timeIndex={work.timeIndex}
                       seriesPreview={work.seriesPreview}
@@ -264,6 +266,8 @@ export default function GalleryPage() {
             center={featured.center}
             zoom={featured.zoom}
             polygon={featured.polygon}
+            boundaryGeometry={featured.boundaryGeometry}
+            territoryCode={featured.territoryCode}
             variable={featured.variable}
             timeIndex={featured.timeIndex}
             seriesPreview={featured.seriesPreview}

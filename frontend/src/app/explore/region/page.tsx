@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -15,28 +15,31 @@ import {
   Undo2,
 } from "lucide-react";
 import { GeoMap, type MapDrawTool } from "@/components/breathe/GeoMap";
-import { BasemapSwitcher, DataBadge, Legend, SiteFooter, Timeline } from "@/components/breathe/SharedUI";
+import { BasemapSwitcher, DataBadge, Legend, SiteFooter, TerritorySelect, Timeline } from "@/components/breathe/SharedUI";
 import { AudioTransport } from "@/components/breathe/SoundVisuals";
 import { useBreathe } from "@/context/BreatheContext";
-import { getLayerDefinition, presetSelections, timeSlots } from "@/lib/breatheData";
-import { formatBounds } from "@/lib/geoUtils";
+import { getLayerDefinition, timeSlots } from "@/lib/breatheData";
+import { formatBounds, zoomForBounds } from "@/lib/geoUtils";
 
 export default function RegionPage() {
   const {
     selection,
+    territories,
     activeLayer,
     basemapMode,
     layerVisible,
     layerOpacity,
     timeIndex,
     camera,
+    mapping,
     regionStats,
     canUndoPolygon,
     canRedoPolygon,
     setTimeIndex,
     setBasemapMode,
     setPolygon,
-    flyTo,
+    selectTerritory,
+    convertBoundaryToEditableSketch,
     selectPreset,
     undoPolygon,
     redoPolygon,
@@ -45,11 +48,21 @@ export default function RegionPage() {
     buildCompositionSpec,
   } = useBreathe();
 
-  const [tool, setTool] = useState<MapDrawTool>("polygon");
+  const [tool, setTool] = useState<MapDrawTool>("select");
   const [timelinePlaying, setTimelinePlaying] = useState(false);
+  const didFrameOnMountRef = useRef(false);
 
   const layerDef = getLayerDefinition(activeLayer);
   const spec = useMemo(() => buildCompositionSpec(), [buildCompositionSpec]);
+
+  useEffect(() => {
+    if (didFrameOnMountRef.current) return;
+    didFrameOnMountRef.current = true;
+    setCamera({
+      center: selection.center,
+      zoom: Math.max(2.0, zoomForBounds(selection.bounds)),
+    });
+  }, [selection.center, selection.bounds, setCamera]);
 
   useEffect(() => {
     if (!timelinePlaying) return;
@@ -163,22 +176,24 @@ export default function RegionPage() {
               layerVisible={layerVisible}
               layerOpacity={layerOpacity}
               timeIndex={timeIndex}
-              center={selection.center}
-              zoom={Math.max(4.0, camera.zoom)}
+              center={camera.center}
+              zoom={camera.zoom}
               onCameraChange={(nextCenter, nextZoom) =>
-                setCamera({ mode: "flat", center: nextCenter, zoom: nextZoom })
+                setCamera({ center: nextCenter, zoom: nextZoom })
               }
               polygon={selection.polygon}
+              boundaryGeometry={selection.boundaryGeometry}
+              boundaryKind={selection.boundaryKind}
               onPolygonChange={(pts) => setPolygon(pts, "Custom drawn region", "custom")}
               onSelectTerritory={(territory) => {
-                setPolygon(territory.polygon, territory.name, "custom");
-                flyTo(territory.center, Math.max(3.2, territory.zoom));
+                selectTerritory(territory);
                 setTool("select");
               }}
               tool={tool}
               onToolComplete={() => setTool("select")}
               showLabels
               showScaleBar
+              mapping={mapping}
             />
 
             <div className="b-region-map-label">
@@ -209,29 +224,29 @@ export default function RegionPage() {
           </div>
 
           <label className="b-field-label">
-            Region preset
-            <select
-              className="b-text-input"
-              value={presetSelections.some((p) => p.id === selection.id) ? selection.id : "custom"}
-              onChange={(e) => {
-                if (e.target.value !== "custom") {
-                  selectPreset(e.target.value);
-                  setTool("select");
-                }
+            Territory / region
+            <TerritorySelect
+              selection={selection}
+              territories={territories}
+              onSelectValue={(val) => {
+                selectPreset(val);
+                setTool("select");
               }}
-            >
-              {presetSelections.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-              {!presetSelections.some((p) => p.id === selection.id) && (
-                <option value="custom">{selection.name}</option>
-              )}
-            </select>
+              ariaLabel="Select region or territory"
+            />
           </label>
 
           <div className="b-metric-list">
+            <div>
+              <span>Boundary mode</span>
+              <strong>
+                {selection.areaKm2 === 0
+                  ? "—"
+                  : selection.boundaryKind === "drawn"
+                  ? "Editable custom sketch"
+                  : "National border (Admin-0)"}
+              </strong>
+            </div>
             <div>
               <span>Extent</span>
               <strong className="b-tabular">{formatBounds(selection.bounds)}</strong>
@@ -263,6 +278,20 @@ export default function RegionPage() {
               </strong>
             </div>
           </div>
+
+          {selection.boundaryKind !== "drawn" && selection.polygon.length >= 3 && (
+            <button
+              type="button"
+              className="b-button b-button-secondary b-full-button"
+              onClick={() => {
+                convertBoundaryToEditableSketch();
+                setTool("select");
+              }}
+            >
+              <PenTool size={14} />
+              <span>Convert to editable sketch</span>
+            </button>
+          )}
 
           <AudioTransport compact title={`${selection.name} audition`} spec={spec} />
 

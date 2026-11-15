@@ -20,6 +20,13 @@ import {
 } from "@/lib/breatheData";
 import { fetchBackendRegionStats, samplePolygonSeries } from "@/lib/geosCfRaster";
 import { zoomForBounds } from "@/lib/geoUtils";
+import {
+  buildResolvedTerritory,
+  findTerritoryFeature,
+  getCachedWorldBoundaries,
+  loadWorldBoundaries,
+  resolveTerritoryByCodeOrName,
+} from "@/lib/worldBoundaries";
 import { sonificationService } from "@/services/sonificationService";
 import type {
   AudioCompositionSpec,
@@ -32,6 +39,7 @@ import type {
   MapCameraState,
   RegionStats,
   SonificationMapping,
+  TerritorySelectionPayload,
 } from "@/types/breathe";
 
 const DEFAULT_SELECTION = presetSelections[0];
@@ -61,8 +69,15 @@ const STORAGE_KEYS = {
   bookmarks: "breathe-bookmarks-v1",
 };
 
+export interface TerritoryCatalogEntry {
+  id: string;
+  isoNumeric: string;
+  name: string;
+}
+
 interface BreatheContextValue {
   selection: GeographicSelection;
+  territories: TerritoryCatalogEntry[];
   activeLayer: LayerKey;
   basemapMode: BasemapMode;
   layerVisible: boolean;
@@ -89,6 +104,9 @@ interface BreatheContextValue {
   flyTo: (center: GeoPoint, zoom?: number) => void;
   updateMapping: (patch: Partial<SonificationMapping>) => void;
   selectPreset: (presetId: string) => void;
+  selectTerritory: (territory: TerritorySelectionPayload) => void;
+  selectTerritoryByCode: (codeOrName: string) => Promise<void>;
+  convertBoundaryToEditableSketch: () => void;
   setPolygon: (
     points: GeoPoint[],
     name?: string,
@@ -143,7 +161,55 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
   const [regionSeries, setRegionSeries] = useState<number[]>([64, 68, 72, 78, 74, 69, 66, 70]);
   const [savedWorks, setSavedWorks] = useState<GalleryWork[]>([]);
   const [bookmarkedIds, setBookmarkedIds] = useState<string[]>(["beijing", "monsoon"]);
+  const [territories, setTerritories] = useState<TerritoryCatalogEntry[]>([]);
   const hydratedRef = useRef(false);
+
+  // Load world countries catalog once for dropdown selectors and boundary hydration
+  useEffect(() => {
+    let active = true;
+    void loadWorldBoundaries().then((bundle) => {
+      if (!active) return;
+      const entries: TerritoryCatalogEntry[] = bundle.countries.features
+        .map((f) => ({
+          id: `territory-${f.properties.isoNumeric}`,
+          isoNumeric: f.properties.isoNumeric,
+          name: f.properties.name,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      setTerritories(entries);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Automatically hydrate full GeoJSON Polygon/MultiPolygon boundary whenever selection carries a territoryCode
+  useEffect(() => {
+    const code = selection.territoryCode;
+    if (!code || selection.boundaryGeometry) return;
+    let cancelled = false;
+    void resolveTerritoryByCodeOrName(code, selection.id, selection.name).then((resolved) => {
+      if (cancelled || !resolved) return;
+      setSelectionHistory((prev) =>
+        prev.map((item) =>
+          item.id === selection.id && item.territoryCode === code && !item.boundaryGeometry
+            ? {
+                ...item,
+                boundaryGeometry: resolved.boundaryGeometry,
+                boundaryKind: "territory",
+                polygon: resolved.polygon,
+                bounds: resolved.bounds,
+                areaKm2: resolved.areaKm2,
+                center: resolved.center,
+              }
+            : item
+        )
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selection.id, selection.name, selection.territoryCode, selection.boundaryGeometry]);
 
   // Hydrate persisted selection, saved works, bookmarks, and optional URL query context once on client
   useEffect(() => {
@@ -159,7 +225,14 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
             parsed.id ?? "custom-region",
             parsed.name ?? "Custom atmospheric region",
             parsed.polygon,
-            parsed.sourceType ?? "custom"
+            parsed.sourceType ?? "custom",
+            {
+              boundaryKind: parsed.boundaryKind ?? (parsed.territoryCode ? "territory" : "drawn"),
+              territoryCode: parsed.territoryCode,
+              bounds: parsed.bounds,
+              areaKm2: parsed.areaKm2,
+              center: parsed.center,
+            }
           );
           setSelectionHistory([restored]);
           setHistoryIndex(0);
@@ -191,7 +264,11 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
     if (workId) {
       const work = galleryWorks.find((item) => item.id === workId);
       if (work) {
-        const nextSel = makeSelection(work.regionId, work.region, work.polygon, "gallery");
+        const nextSel = makeSelection(work.regionId, work.region, work.polygon, "gallery", {
+          territoryCode: work.territoryCode,
+          boundaryKind: work.territoryCode ? "territory" : "drawn",
+          boundaryGeometry: work.boundaryGeometry,
+        });
         setSelectionHistory([nextSel]);
         setHistoryIndex(0);
         setActiveLayer(work.variable);
@@ -236,20 +313,31 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Persist current region to sessionStorage
+  // Persist current region to sessionStorage without huge GeoJSON geometry blobs (rehydrated by territoryCode)
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.sessionStorage.setItem(STORAGE_KEYS.region, JSON.stringify(selection));
+      const compactSelection = {
+        id: selection.id,
+        name: selection.name,
+        boundaryKind: selection.boundaryKind,
+        territoryCode: selection.territoryCode,
+        polygon: selection.polygon,
+        bounds: selection.bounds,
+        areaKm2: selection.areaKm2,
+        center: selection.center,
+        sourceType: selection.sourceType,
+      };
+      window.sessionStorage.setItem(STORAGE_KEYS.region, JSON.stringify(compactSelection));
     } catch {
       // Ignore quota errors
     }
   }, [selection]);
 
-  // Query live backend / GEOS-CF raster stats for the current polygon + active variable + timestamp
+  // Query live backend / GEOS-CF raster stats for the current boundary + active variable + timestamp
   useEffect(() => {
     let cancelled = false;
-    if (selection.polygon.length < 3) return;
+    if (!selection.boundaryGeometry && selection.polygon.length < 3) return;
 
     setRegionStats((prev) => ({
       ...prev,
@@ -262,7 +350,8 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
       activeLayer,
       timeIndex,
       selection.bounds,
-      selection.polygon
+      selection.polygon,
+      selection.boundaryGeometry
     ).then((stats) => {
       if (!cancelled) setRegionStats(stats);
     });
@@ -270,14 +359,14 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [selection.polygon, selection.bounds, activeLayer, timeIndex]);
+  }, [selection.polygon, selection.bounds, selection.boundaryGeometry, activeLayer, timeIndex]);
 
-  // Sample diurnal 8-step atmospheric time series across the current polygon & active variable
+  // Sample diurnal 8-step atmospheric time series across the current boundary & active variable
   useEffect(() => {
     let cancelled = false;
-    if (selection.polygon.length < 3) return;
+    if (!selection.boundaryGeometry && selection.polygon.length < 3) return;
 
-    void samplePolygonSeries(activeLayer, selection.polygon).then((series) => {
+    void samplePolygonSeries(activeLayer, selection.polygon, selection.boundaryGeometry).then((series) => {
       if (!cancelled && series.length > 0) {
         setRegionSeries(series);
       }
@@ -286,7 +375,7 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [selection.polygon, activeLayer]);
+  }, [selection.polygon, selection.boundaryGeometry, activeLayer]);
 
   const setCamera = useCallback(
     (patch: Partial<MapCameraState> | ((prev: MapCameraState) => MapCameraState)) => {
@@ -315,19 +404,96 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
     [historyIndex]
   );
 
-  const selectPreset = useCallback(
-    (presetId: string) => {
-      const found = presetSelections.find((p) => p.id === presetId);
-      if (!found) return;
-      pushSelection(found);
+  const selectTerritory = useCallback(
+    (territory: TerritorySelectionPayload) => {
+      const matchedPreset = presetSelections.find(
+        (p) => p.territoryCode === territory.territoryCode || p.id === territory.id
+      );
+      const next = makeSelection(
+        matchedPreset?.id ?? territory.id,
+        matchedPreset?.name ?? territory.name,
+        territory.polygon,
+        matchedPreset ? "preset" : "custom",
+        {
+          boundaryGeometry: territory.boundaryGeometry,
+          boundaryKind: "territory",
+          territoryCode: territory.territoryCode,
+          bounds: territory.bounds,
+          areaKm2: territory.areaKm2,
+          center: territory.center,
+        }
+      );
+      pushSelection(next);
       setCameraState((prev) => ({
         ...prev,
-        center: found.center,
-        zoom: zoomForBounds(found.bounds),
+        center: territory.center,
+        zoom: territory.zoom,
       }));
     },
     [pushSelection]
   );
+
+  const selectTerritoryByCode = useCallback(
+    async (codeOrName: string) => {
+      const resolved = await resolveTerritoryByCodeOrName(codeOrName);
+      if (!resolved) return;
+      selectTerritory(resolved);
+    },
+    [selectTerritory]
+  );
+
+  const selectPreset = useCallback(
+    (presetId: string) => {
+      const found = presetSelections.find((p) => p.id === presetId);
+      if (!found) {
+        if (presetId.startsWith("territory-")) {
+          void selectTerritoryByCode(presetId);
+        }
+        return;
+      }
+
+      const cached = getCachedWorldBoundaries();
+      let resolvedSel = found;
+      if (cached && found.territoryCode) {
+        const feat = findTerritoryFeature(cached, found.territoryCode);
+        const resolved = feat ? buildResolvedTerritory(feat, found.id, found.name) : null;
+        if (resolved) {
+          resolvedSel = makeSelection(found.id, found.name, resolved.polygon, "preset", {
+            boundaryGeometry: resolved.boundaryGeometry,
+            boundaryKind: "territory",
+            territoryCode: resolved.territoryCode,
+            bounds: resolved.bounds,
+            areaKm2: resolved.areaKm2,
+            center: resolved.center,
+          });
+        }
+      }
+
+      pushSelection(resolvedSel);
+      setCameraState((prev) => ({
+        ...prev,
+        center: resolvedSel.center,
+        zoom: zoomForBounds(resolvedSel.bounds),
+      }));
+    },
+    [pushSelection, selectTerritoryByCode]
+  );
+
+  const convertBoundaryToEditableSketch = useCallback(() => {
+    if (selection.polygon.length < 3) return;
+    const next = makeSelection(
+      `sketch-${Date.now()}`,
+      `${selection.name} (Editable sketch)`,
+      selection.polygon,
+      "custom",
+      {
+        boundaryKind: "drawn",
+        boundaryGeometry: undefined,
+        territoryCode: undefined,
+      }
+    );
+    pushSelection(next);
+  }, [selection.name, selection.polygon, pushSelection]);
 
   const setPolygon = useCallback(
     (
@@ -340,7 +506,12 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
         `custom-${Date.now()}`,
         name ?? "Custom drawn region",
         points,
-        sourceType
+        sourceType,
+        {
+          boundaryKind: "drawn",
+          boundaryGeometry: undefined,
+          territoryCode: undefined,
+        }
       );
       pushSelection(next);
     },
@@ -403,7 +574,18 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
 
   const loadWorkContext = useCallback(
     (work: GalleryWork, targetMode?: "globe" | "flat") => {
-      const next = makeSelection(work.regionId, work.region, work.polygon, "gallery");
+      const cached = getCachedWorldBoundaries();
+      let resolvedGeom = work.boundaryGeometry;
+      if (!resolvedGeom && work.territoryCode && cached) {
+        const feat = findTerritoryFeature(cached, work.territoryCode);
+        const resolved = feat ? buildResolvedTerritory(feat, work.regionId, work.region) : null;
+        if (resolved) resolvedGeom = resolved.boundaryGeometry;
+      }
+      const next = makeSelection(work.regionId, work.region, work.polygon, "gallery", {
+        boundaryGeometry: resolvedGeom,
+        boundaryKind: work.territoryCode ? "territory" : "drawn",
+        territoryCode: work.territoryCode,
+      });
       pushSelection(next);
       setActiveLayer(work.variable);
       setTimeIndex(Math.max(0, Math.min(timeSlots.length - 1, work.timeIndex)));
@@ -439,6 +621,7 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
         creator: "Saved in Studio",
         regionId: selection.id,
         region: selection.name,
+        territoryCode: selection.territoryCode,
         polygon: selection.polygon,
         center: selection.center,
         zoom: Math.max(2.6, zoomForBounds(selection.bounds)),
@@ -490,6 +673,7 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
     return {
       version: "2.0",
       name: selection.name,
+      territoryCode: selection.territoryCode,
       polygon: selection.polygon,
       layer: activeLayer,
       timeIndex,
@@ -508,7 +692,16 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
   const importProjectFile = useCallback(
     (data: BreatheProjectFile) => {
       if (Array.isArray(data.polygon) && data.polygon.length >= 3) {
-        const next = makeSelection("imported", data.name || "Imported Region", data.polygon, "custom");
+        const next = makeSelection(
+          data.territoryCode ? `territory-${data.territoryCode}` : "imported",
+          data.name || "Imported Region",
+          data.polygon,
+          "custom",
+          {
+            territoryCode: data.territoryCode,
+            boundaryKind: data.territoryCode ? "territory" : "drawn",
+          }
+        );
         pushSelection(next);
         setCameraState((prev) => ({
           ...prev,
@@ -540,6 +733,7 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<BreatheContextValue>(
     () => ({
       selection,
+      territories,
       activeLayer,
       basemapMode,
       layerVisible,
@@ -566,6 +760,9 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
       flyTo,
       updateMapping,
       selectPreset,
+      selectTerritory,
+      selectTerritoryByCode,
+      convertBoundaryToEditableSketch,
       setPolygon,
       undoPolygon,
       redoPolygon,
@@ -579,6 +776,7 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       selection,
+      territories,
       activeLayer,
       basemapMode,
       layerVisible,
@@ -598,6 +796,9 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
       flyTo,
       updateMapping,
       selectPreset,
+      selectTerritory,
+      selectTerritoryByCode,
+      convertBoundaryToEditableSketch,
       setPolygon,
       undoPolygon,
       redoPolygon,

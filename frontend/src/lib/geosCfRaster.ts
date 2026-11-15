@@ -1,6 +1,13 @@
 import * as maplibregl from "maplibre-gl";
 import { frameFor, getLayerDefinition, timeSlots } from "@/lib/breatheData";
-import { computeBounds, pointInPolygon } from "@/lib/geoUtils";
+import {
+  computeBounds,
+  findInteriorPoint,
+  getGeometryPolygons,
+  pointInPolygon,
+  pointInPolygonCoords,
+  serializePolygonRingsForApi,
+} from "@/lib/geoUtils";
 import type { GeoBounds, GeoPoint, LayerDefinition, LayerKey, RegionStats } from "@/types/breathe";
 
 type ColormapName = LayerDefinition["cmap"];
@@ -64,7 +71,7 @@ const EXPANDED_LUTS: Record<ColormapName, Array<[number, number, number]>> = {
   plasma: expandLut(LUT_STOPS.plasma),
 };
 
-interface DecodedRaster {
+export interface DecodedRaster {
   width: number;
   height: number;
   data: Uint8ClampedArray;
@@ -299,6 +306,48 @@ function intensityToEditorialRgba(t: number): [number, number, number, number] {
   ];
 }
 
+/**
+ * Returns opaque pine-sage-amber RGB values for 2D scanline hit particles & glow filaments,
+ * preserving the map's concentration color progression down into moderate low-plume ranges.
+ */
+export function getEditorialAccentRgb(t: number): [number, number, number] {
+  const safeT = Math.max(0.22, Math.min(1, t));
+  const [r, g, b] = intensityToEditorialRgba(safeT);
+  return [r, g, b];
+}
+
+/** Loads and caches the decoded NASA GEOS-CF v2 raster image for a given variable and UTC slot. */
+export async function loadLayerRaster(
+  layerKey: LayerKey,
+  timeIndex: number
+): Promise<DecodedRaster | null> {
+  const layer = getLayerDefinition(layerKey);
+  if (!layer.available) return null;
+  const safeIndex = Math.max(0, Math.min(timeSlots.length - 1, timeIndex));
+  const frame = frameFor(layerKey, safeIndex);
+  if (!frame) return null;
+  return loadRasterPixels(frame.imageUrl, 1280);
+}
+
+/**
+ * Decodes physical concentration and normalized intensity [0, 1] at a coordinate from a loaded raster.
+ * Returns null over masked open-ocean / no-data cells.
+ */
+export function decodeRasterSample(
+  raster: DecodedRaster,
+  layer: LayerDefinition,
+  lat: number,
+  lon: number
+): { value: number; norm: number } | null {
+  const [r, g, b, a] = sampleEquirectangularSmooth(raster, lat, lon);
+  const norm = decodeColormapNormalized(r, g, b, a, layer.cmap);
+  if (norm === null) return null;
+  return {
+    value: layer.vmin + norm * (layer.vmax - layer.vmin),
+    norm,
+  };
+}
+
 const REGION_CROPS = {
   northernVietnam: {
     url: "/images/earth-northern-vietnam.jpg",
@@ -472,7 +521,8 @@ export function registerBreatheMapProtocol(ml: typeof maplibregl) {
 export async function samplePolygonStats(
   layerKey: LayerKey,
   timeIndex: number,
-  polygon: GeoPoint[]
+  polygon: GeoPoint[],
+  boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon
 ): Promise<RegionStats> {
   const layer = getLayerDefinition(layerKey);
   const safeIndex = Math.max(0, Math.min(timeSlots.length - 1, timeIndex));
@@ -498,7 +548,7 @@ export async function samplePolygonStats(
   }
 
   const frame = frameFor(layerKey, safeIndex);
-  if (!frame || polygon.length < 3) {
+  if (!frame || (!boundaryGeometry && polygon.length < 3)) {
     return {
       variable: layerKey,
       unit: layer.unit,
@@ -535,57 +585,89 @@ export async function samplePolygonStats(
     };
   }
 
-  const bounds = computeBounds(polygon);
-  const xMin = Math.max(0, Math.floor(((bounds.west + 180) / 360) * raster.width));
-  const xMax = Math.min(raster.width - 1, Math.ceil(((bounds.east + 180) / 360) * raster.width));
-  const yMin = Math.max(0, Math.floor(((90 - bounds.north) / 180) * raster.height));
-  const yMax = Math.min(raster.height - 1, Math.ceil(((90 - bounds.south) / 180) * raster.height));
-
-  const spanX = Math.max(1, xMax - xMin);
-  const spanY = Math.max(1, yMax - yMin);
-  const stepX = Math.max(1, Math.floor(spanX / 36));
-  const stepY = Math.max(1, Math.floor(spanY / 36));
-
   const values: number[] = [];
   let weightedSum = 0;
   let weightTotal = 0;
   let checkedCells = 0;
+  const visited = new Set<number>();
 
-  for (let py = yMin; py <= yMax; py += stepY) {
-    const lat = 90 - ((py + 0.5) / raster.height) * 180;
-    const cosW = Math.max(0.05, Math.cos((lat * Math.PI) / 180));
-    for (let px = xMin; px <= xMax; px += stepX) {
-      const lon = ((px + 0.5) / raster.width) * 360 - 180;
-      if (!pointInPolygon(lat, lon, polygon)) continue;
-      checkedCells += 1;
-      const idx = (py * raster.width + px) * 4;
-      const t = decodeColormapNormalized(
-        raster.data[idx],
-        raster.data[idx + 1],
-        raster.data[idx + 2],
-        raster.data[idx + 3],
-        layer.cmap
-      );
-      if (t === null) continue;
-      const val = layer.vmin + t * (layer.vmax - layer.vmin);
-      values.push(val);
-      weightedSum += val * cosW;
-      weightTotal += cosW;
+  const scanBounds = (
+    b: GeoBounds,
+    hitTest: (lat: number, lon: number) => boolean
+  ) => {
+    const xMin = Math.max(0, Math.floor(((b.west + 180) / 360) * raster.width));
+    const xMax = Math.min(raster.width - 1, Math.ceil(((b.east + 180) / 360) * raster.width));
+    const yMin = Math.max(0, Math.floor(((90 - b.north) / 180) * raster.height));
+    const yMax = Math.min(raster.height - 1, Math.ceil(((90 - b.south) / 180) * raster.height));
+
+    const spanX = Math.max(1, xMax - xMin);
+    const spanY = Math.max(1, yMax - yMin);
+    const stepX = Math.max(1, Math.floor(spanX / 36));
+    const stepY = Math.max(1, Math.floor(spanY / 36));
+
+    for (let py = yMin; py <= yMax; py += stepY) {
+      const lat = 90 - ((py + 0.5) / raster.height) * 180;
+      const cosW = Math.max(0.05, Math.cos((lat * Math.PI) / 180));
+      for (let px = xMin; px <= xMax; px += stepX) {
+        const cellKey = py * raster.width + px;
+        if (visited.has(cellKey)) continue;
+        const lon = ((px + 0.5) / raster.width) * 360 - 180;
+        if (!hitTest(lat, lon)) continue;
+        visited.add(cellKey);
+        checkedCells += 1;
+        const idx = cellKey * 4;
+        const t = decodeColormapNormalized(
+          raster.data[idx],
+          raster.data[idx + 1],
+          raster.data[idx + 2],
+          raster.data[idx + 3],
+          layer.cmap
+        );
+        if (t === null) continue;
+        const val = layer.vmin + t * (layer.vmax - layer.vmin);
+        values.push(val);
+        weightedSum += val * cosW;
+        weightTotal += cosW;
+      }
     }
+  };
+
+  if (boundaryGeometry) {
+    const polys = getGeometryPolygons(boundaryGeometry);
+    for (const rings of polys) {
+      const outer = rings[0];
+      if (!outer || outer.length < 3) continue;
+      let west = Infinity;
+      let south = Infinity;
+      let east = -Infinity;
+      let north = -Infinity;
+      for (const c of outer) {
+        if (c[0] < west) west = c[0];
+        if (c[0] > east) east = c[0];
+        if (c[1] < south) south = c[1];
+        if (c[1] > north) north = c[1];
+      }
+      if (east - west > 175) continue;
+      scanBounds({ west, south, east, north }, (lat, lon) => pointInPolygonCoords(lat, lon, rings));
+    }
+  } else {
+    const bounds = computeBounds(polygon);
+    scanBounds(bounds, (lat, lon) => pointInPolygon(lat, lon, polygon));
   }
 
-  // Fallback to polygon centroid sample for micro-polygons smaller than one raster cell
+  // Fallback to interior point sample for micro-territories smaller than one raster cell
   if (values.length === 0) {
-    const cLat = polygon.reduce((s, p) => s + p.lat, 0) / polygon.length;
-    const cLon = polygon.reduce((s, p) => s + p.lon, 0) / polygon.length;
-    const [r, g, b, a] = sampleEquirectangularPixel(raster, cLat, cLon);
-    const t = decodeColormapNormalized(r, g, b, a, layer.cmap);
-    if (t !== null) {
-      const val = layer.vmin + t * (layer.vmax - layer.vmin);
-      values.push(val);
-      weightedSum = val;
-      weightTotal = 1;
-      checkedCells = Math.max(1, checkedCells);
+    const samplePt = findInteriorPoint(boundaryGeometry ?? polygon);
+    if (samplePt) {
+      const [r, g, b, a] = sampleEquirectangularPixel(raster, samplePt.lat, samplePt.lon);
+      const t = decodeColormapNormalized(r, g, b, a, layer.cmap);
+      if (t !== null) {
+        const val = layer.vmin + t * (layer.vmax - layer.vmin);
+        values.push(val);
+        weightedSum = val;
+        weightTotal = 1;
+        checkedCells = Math.max(1, checkedCells);
+      }
     }
   }
 
@@ -634,13 +716,17 @@ export async function samplePolygonStats(
 /**
  * Computes the 8-timestamp diurnal mean time series for any drawn polygon and active variable.
  */
-export async function samplePolygonSeries(layerKey: LayerKey, polygon: GeoPoint[]): Promise<number[]> {
+export async function samplePolygonSeries(
+  layerKey: LayerKey,
+  polygon: GeoPoint[],
+  boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon
+): Promise<number[]> {
   const layer = getLayerDefinition(layerKey);
   if (!layer.available || layerKey === "AOD") {
     return timeSlots.map(() => 0);
   }
   const results = await Promise.all(
-    timeSlots.map((_, idx) => samplePolygonStats(layerKey, idx, polygon))
+    timeSlots.map((_, idx) => samplePolygonStats(layerKey, idx, polygon, boundaryGeometry))
   );
   return results.map((stat) => (stat.mean !== null ? stat.mean : layer.vmin));
 }
@@ -649,17 +735,18 @@ let backendUnavailableUntil = 0;
 
 /**
  * Queries FastAPI /api/v1/jukebox/region when configured & healthy, otherwise falls back cleanly
- * to offline GEOS-CF raster polygon sampling without user-facing errors.
+ * to offline GEOS-CF raster polygon/MultiPolygon sampling without user-facing errors.
  */
 export async function fetchBackendRegionStats(
   layerKey: LayerKey,
   timeIndex: number,
   bounds: GeoBounds,
-  polygon: GeoPoint[]
+  polygon: GeoPoint[],
+  boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon
 ): Promise<RegionStats> {
   const layer = getLayerDefinition(layerKey);
   if (!layer.available || layerKey === "AOD") {
-    return samplePolygonStats(layerKey, timeIndex, polygon);
+    return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
   }
 
   const baseUrl = process.env.NEXT_PUBLIC_BACKEND_URL?.trim();
@@ -667,12 +754,13 @@ export async function fetchBackendRegionStats(
   const timestamp = timeSlots[safeIndex] ?? "2026-11-12T00:30:00Z";
 
   if (!baseUrl || Date.now() < backendUnavailableUntil) {
-    return samplePolygonStats(layerKey, timeIndex, polygon);
+    return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
   }
 
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 2200);
+    const serializedRings = serializePolygonRingsForApi(boundaryGeometry ?? polygon, 320);
     const response = await fetch(`${baseUrl.replace(/\/$/, "")}/api/v1/jukebox/region`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -687,6 +775,7 @@ export async function fetchBackendRegionStats(
           lonMin: Number(bounds.west.toFixed(4)),
           lonMax: Number(bounds.east.toFixed(4)),
         },
+        ...(serializedRings && serializedRings.length > 0 ? { polygons: serializedRings } : {}),
         normalizationMethod: "log_scale",
       }),
     });
@@ -694,7 +783,7 @@ export async function fetchBackendRegionStats(
 
     if (!response.ok) {
       backendUnavailableUntil = Date.now() + 30000;
-      return samplePolygonStats(layerKey, timeIndex, polygon);
+      return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
     }
 
     const payload = (await response.json()) as {
@@ -712,7 +801,7 @@ export async function fetchBackendRegionStats(
 
     const summary = payload.summary;
     if (!summary || summary.displayMean == null) {
-      return samplePolygonStats(layerKey, timeIndex, polygon);
+      return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
     }
 
     const coveragePct =
@@ -737,7 +826,7 @@ export async function fetchBackendRegionStats(
     };
   } catch {
     backendUnavailableUntil = Date.now() + 30000;
-    return samplePolygonStats(layerKey, timeIndex, polygon);
+    return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
   }
 }
 
@@ -745,6 +834,8 @@ export interface SnapshotOptions {
   center: GeoPoint;
   zoom: number;
   polygon: GeoPoint[];
+  boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon;
+  territoryCode?: string;
   variable: LayerKey;
   timeIndex: number;
   seriesPreview?: number[];
@@ -876,8 +967,39 @@ export async function renderMapSnapshotToCanvas(
     ctx.stroke();
   }
 
-  // Highlighted geographic region polygon
-  if (options.polygon.length >= 3) {
+  // Highlighted geographic boundary (full MultiPolygon territory border when available, or drawn ring)
+  let resolvedGeom = options.boundaryGeometry;
+  if (!resolvedGeom && options.territoryCode && boundaries) {
+    const wbMod = await import("./worldBoundaries").catch(() => null);
+    const feat = wbMod?.findTerritoryFeature(boundaries, options.territoryCode);
+    if (feat && (feat.geometry.type === "Polygon" || feat.geometry.type === "MultiPolygon")) {
+      resolvedGeom = feat.geometry;
+    }
+  }
+
+  if (resolvedGeom) {
+    const polys = getGeometryPolygons(resolvedGeom);
+    ctx.save();
+    ctx.beginPath();
+    for (const rings of polys) {
+      for (const ring of rings) {
+        if (ring.length < 3) continue;
+        ring.forEach(([lon, lat], idx) => {
+          const px = ((lon - west) / (east - west)) * width;
+          const py = ((north - lat) / (north - south)) * height;
+          if (idx === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        });
+        ctx.closePath();
+      }
+    }
+    ctx.fillStyle = "rgba(224, 235, 228, 0.22)";
+    ctx.fill("evenodd");
+    ctx.lineWidth = 1.65;
+    ctx.strokeStyle = "#f6f5f0";
+    ctx.stroke();
+    ctx.restore();
+  } else if (options.polygon.length >= 3) {
     ctx.save();
     ctx.beginPath();
     options.polygon.forEach((pt, idx) => {

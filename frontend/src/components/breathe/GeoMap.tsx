@@ -5,25 +5,46 @@ import Image from "next/image";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Plus, Minus, Compass, Maximize2, Check, X } from "lucide-react";
-import { getLayerDefinition, observations, presetSelections } from "@/lib/breatheData";
+import { MapScanOverlay } from "@/components/breathe/MapScanOverlay";
+import { getLayerDefinition, observations } from "@/lib/breatheData";
 import { registerBreatheMapProtocol } from "@/lib/geosCfRaster";
-import { clampLat, computeBounds, normalizeLon, polygonToGeoJSONFeature, simplifyPolygon } from "@/lib/geoUtils";
 import {
-  extractTerritoryPolygon,
+  clampLat,
+  computeBounds,
+  computeMinFlatZoom,
+  computePrimaryFocusBounds,
+  normalizeLon,
+  polygonToGeoJSONFeature,
+  simplifyPolygon,
+} from "@/lib/geoUtils";
+import {
+  buildResolvedTerritory,
   loadWorldBoundaries,
   type CountryFeatureProperties,
   type WorldBoundaryBundle,
 } from "@/lib/worldBoundaries";
-import type { BasemapMode, GeoPoint, LayerKey } from "@/types/breathe";
+import type {
+  BasemapMode,
+  GeoPoint,
+  LayerKey,
+  SelectionBoundaryKind,
+  SonificationMapping,
+  TerritorySelectionPayload,
+} from "@/types/breathe";
+
+const FALLBACK_SCAN_MAPPING: SonificationMapping = {
+  density: 0.65,
+  brightness: 0.52,
+  pitchSensitivity: 0.58,
+  spatialSpread: 0.42,
+  tempo: 96,
+  musicalKey: "A minor",
+  waveform: "sine",
+  volume: 0.72,
+};
 
 export type MapDrawTool = "select" | "polygon" | "rectangle" | "freehand";
-
-export interface TerritorySelectionPayload {
-  name: string;
-  polygon: GeoPoint[];
-  center: GeoPoint;
-  zoom: number;
-}
+export type { TerritorySelectionPayload };
 
 type GeoMapProps = {
   mode?: "globe" | "flat";
@@ -35,6 +56,8 @@ type GeoMapProps = {
   center?: GeoPoint;
   zoom?: number;
   polygon?: GeoPoint[];
+  boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon | null;
+  boundaryKind?: SelectionBoundaryKind;
   onPolygonChange?: (points: GeoPoint[]) => void;
   onSelectTerritory?: (territory: TerritorySelectionPayload) => void;
   tool?: MapDrawTool;
@@ -46,6 +69,7 @@ type GeoMapProps = {
   showControls?: boolean;
   showScaleBar?: boolean;
   compact?: boolean;
+  mapping?: SonificationMapping;
   className?: string;
   label?: string;
   /** Preserved for legacy prop compatibility. */
@@ -60,7 +84,9 @@ interface BasemapTheme {
   satelliteOpacity: number;
   coast: string;
   border: string;
-  basinLine: string;
+  selectedFill: string;
+  selectedLine: string;
+  selectedHalo: string;
   graticule: string;
   isLight: boolean;
   water: string;
@@ -81,7 +107,9 @@ const BASEMAP_THEMES: Record<BasemapMode, BasemapTheme> = {
     satelliteOpacity: 0,
     coast: "#244e47",
     border: "#4c6660",
-    basinLine: "rgba(35, 105, 95, 0.34)",
+    selectedFill: "rgba(35, 105, 95, 0.16)",
+    selectedLine: "#144d46",
+    selectedHalo: "rgba(255, 254, 250, 0.92)",
     graticule: "rgba(20, 44, 44, 0.14)",
     isLight: true,
     water: "#c9dcd8",
@@ -100,7 +128,9 @@ const BASEMAP_THEMES: Record<BasemapMode, BasemapTheme> = {
     satelliteOpacity: 0,
     coast: "rgba(182, 214, 198, 0.72)",
     border: "rgba(218, 236, 226, 0.52)",
-    basinLine: "rgba(224, 235, 228, 0.36)",
+    selectedFill: "rgba(191, 212, 182, 0.2)",
+    selectedLine: "#f4f6ee",
+    selectedHalo: "rgba(14, 30, 28, 0.9)",
     graticule: "rgba(246, 245, 240, 0.16)",
     isLight: false,
     water: "#173636",
@@ -119,7 +149,9 @@ const BASEMAP_THEMES: Record<BasemapMode, BasemapTheme> = {
     satelliteOpacity: 0,
     coast: "#142c2c",
     border: "#687a76",
-    basinLine: "rgba(20, 44, 44, 0.28)",
+    selectedFill: "rgba(20, 62, 56, 0.15)",
+    selectedLine: "#142c2c",
+    selectedHalo: "rgba(255, 254, 250, 0.92)",
     graticule: "rgba(20, 44, 44, 0.2)",
     isLight: true,
     water: "#d3dfdb",
@@ -138,7 +170,9 @@ const BASEMAP_THEMES: Record<BasemapMode, BasemapTheme> = {
     satelliteOpacity: 0.96,
     coast: "rgba(246, 245, 240, 0.6)",
     border: "rgba(246, 245, 240, 0.7)",
-    basinLine: "rgba(246, 245, 240, 0.34)",
+    selectedFill: "rgba(224, 238, 228, 0.18)",
+    selectedLine: "#f9ffe7",
+    selectedHalo: "rgba(13, 34, 38, 0.88)",
     graticule: "rgba(246, 245, 240, 0.22)",
     isLight: false,
     water: "#173a40",
@@ -152,18 +186,6 @@ const BASEMAP_THEMES: Record<BasemapMode, BasemapTheme> = {
 };
 
 const EMPTY_FC: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
-
-const PRESET_BASINS_FC: GeoJSON.FeatureCollection = {
-  type: "FeatureCollection",
-  features: presetSelections.map((sel) => ({
-    type: "Feature",
-    properties: { id: sel.id, name: sel.name },
-    geometry: {
-      type: "Polygon",
-      coordinates: [[...sel.polygon.map((p) => [p.lon, p.lat]), [sel.polygon[0].lon, sel.polygon[0].lat]]],
-    },
-  })),
-};
 
 function buildGraticuleGeoJSON(): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature<GeoJSON.LineString>[] = [];
@@ -236,6 +258,8 @@ export function GeoMap({
   center,
   zoom = 2.2,
   polygon = [],
+  boundaryGeometry = null,
+  boundaryKind,
   onPolygonChange,
   onSelectTerritory,
   tool = "select",
@@ -247,6 +271,7 @@ export function GeoMap({
   showControls = true,
   showScaleBar = false,
   compact = false,
+  mapping = FALLBACK_SCAN_MAPPING,
   className = "",
   label,
 }: GeoMapProps) {
@@ -264,6 +289,39 @@ export function GeoMap({
   const hoveredIdRef = useRef<number | null>(null);
   const pointerDownPosRef = useRef<{ x: number; y: number } | null>(null);
   const prevModeRef = useRef<"globe" | "flat">(mode);
+  const styleReadyRef = useRef(false);
+
+  const minFlatZoom = useMemo(
+    () => (compact ? 1.0 : computeMinFlatZoom(containerSize.width, containerSize.height)),
+    [compact, containerSize.width, containerSize.height]
+  );
+  const minFlatZoomRef = useRef(minFlatZoom);
+  minFlatZoomRef.current = minFlatZoom;
+  const latestViewPropsRef = useRef({ center, zoom });
+  latestViewPropsRef.current = { center, zoom };
+
+  const isMapStyleReady = useCallback((m: maplibregl.Map) => {
+    const internal = m as unknown as { style?: { _loaded?: boolean } };
+    return styleReadyRef.current || Boolean(internal.style?._loaded);
+  }, []);
+
+  const runWhenStyleReady = useCallback(
+    (m: maplibregl.Map, task: () => void) => {
+      if (isMapStyleReady(m)) {
+        task();
+        return () => {};
+      }
+      const onStyleLoad = () => {
+        styleReadyRef.current = true;
+        task();
+      };
+      m.once("style.load", onStyleLoad);
+      return () => {
+        m.off("style.load", onStyleLoad);
+      };
+    },
+    [isMapStyleReady]
+  );
 
   const [draft, setDraft] = useState<GeoPoint[]>([]);
   const [activeVertexIdx, setActiveVertexIdx] = useState<number | null>(null);
@@ -284,6 +342,8 @@ export function GeoMap({
   toolRef.current = tool;
   const polygonRef = useRef(polygon);
   polygonRef.current = polygon;
+  const boundaryGeometryRef = useRef(boundaryGeometry);
+  boundaryGeometryRef.current = boundaryGeometry;
 
   const graticuleGeoJson = useMemo(() => buildGraticuleGeoJSON(), []);
   const theme = BASEMAP_THEMES[basemapMode] ?? BASEMAP_THEMES.territories;
@@ -341,10 +401,16 @@ export function GeoMap({
       normalizeLon(center?.lon ?? 105.75),
       clampLat(center?.lat ?? 21.1),
     ];
+    const initFlatZoom = compact
+      ? 1.0
+      : computeMinFlatZoom(
+          host.clientWidth || containerSize.width,
+          host.clientHeight || containerSize.height
+        );
     const initialZoom =
       mode === "globe"
         ? Math.min(4.2, zoom)
-        : Math.max(compact ? 1.4 : 2.1, zoom);
+        : Math.max(initFlatZoom, zoom);
     lastPropViewRef.current = {
       lat: initialCenter[1],
       lon: initialCenter[0],
@@ -365,13 +431,13 @@ export function GeoMap({
         renderWorldCopies: false,
         center: initialCenter,
         zoom: initialZoom,
-        minZoom: mode === "globe" ? 1.05 : compact ? 1.2 : 1.75,
+        minZoom: mode === "globe" ? 1.05 : initFlatZoom,
         maxZoom: 9.2,
         maxBounds:
           mode === "flat"
             ? [
-                [-179.9, -76],
-                [179.9, 76],
+                [-179.9, -82],
+                [179.9, 82],
               ]
             : undefined,
         style: {
@@ -408,9 +474,9 @@ export function GeoMap({
               type: "geojson",
               data: EMPTY_FC,
             },
-            "preset-basins": {
+            "selected-boundary": {
               type: "geojson",
-              data: PRESET_BASINS_FC,
+              data: EMPTY_FC,
             },
             "geos-overlay": {
               type: "raster",
@@ -428,7 +494,7 @@ export function GeoMap({
               id: "ocean-bg",
               type: "background",
               paint: {
-                "background-color": theme.land,
+                "background-color": theme.ocean,
               },
             },
             {
@@ -451,7 +517,12 @@ export function GeoMap({
                   theme.landHover,
                   theme.land,
                 ],
-                "fill-opacity": ["case", ["boolean", ["feature-state", "hover"], false], 0.26, 0],
+                "fill-opacity": [
+                  "case",
+                  ["boolean", ["feature-state", "hover"], false],
+                  theme.satelliteOpacity > 0 ? 0.45 : Math.max(0.98, theme.landOpacity),
+                  theme.landOpacity,
+                ],
               },
             },
             {
@@ -515,16 +586,6 @@ export function GeoMap({
               },
             },
             {
-              id: "preset-basins-line",
-              type: "line",
-              source: "preset-basins",
-              paint: {
-                "line-color": theme.basinLine,
-                "line-width": 1.0,
-                "line-dasharray": [3, 2],
-              },
-            },
-            {
               id: "coastlines-line",
               type: "line",
               source: "coastlines",
@@ -552,6 +613,36 @@ export function GeoMap({
               minzoom: 5,
               filter: ["all", [">=", ["get", "admin_level"], 3], ["<=", ["get", "admin_level"], 6], ["!=", ["get", "maritime"], 1]],
               paint: { "line-color": theme.border, "line-width": ["interpolate", ["linear"], ["zoom"], 5, 0.55, 10, 1.05], "line-opacity": 0.55, "line-dasharray": [2, 2] },
+            },
+            {
+              id: "selected-boundary-fill",
+              type: "fill",
+              source: "selected-boundary",
+              paint: {
+                "fill-color": theme.selectedFill,
+                "fill-opacity": 1,
+              },
+            },
+            {
+              id: "selected-boundary-casing",
+              type: "line",
+              source: "selected-boundary",
+              layout: { "line-join": "round", "line-cap": "round" },
+              paint: {
+                "line-color": theme.selectedHalo,
+                "line-width": ["interpolate", ["linear"], ["zoom"], 1, 3.0, 6, 4.4],
+                "line-opacity": 0.92,
+              },
+            },
+            {
+              id: "selected-boundary-line",
+              type: "line",
+              source: "selected-boundary",
+              layout: { "line-join": "round", "line-cap": "round" },
+              paint: {
+                "line-color": theme.selectedLine,
+                "line-width": ["interpolate", ["linear"], ["zoom"], 1, 1.45, 6, 2.3],
+              },
             },
             {
               id: "graticule-layer",
@@ -694,22 +785,32 @@ export function GeoMap({
       if (!feat?.geometry) return;
       const props = feat.properties as Partial<CountryFeatureProperties> | undefined;
       const name = props?.name;
-      if (!name) return;
+      if (!name && !props?.isoNumeric) return;
 
-      // Resolve full unclipped GeoJSON geometry from loaded boundary bundle when available
-      const fullFeature = cachedCountriesLookup(name) ?? (feat as unknown as GeoJSON.Feature);
-      const extracted = extractTerritoryPolygon(fullFeature.geometry);
-      if (!extracted) return;
+      // Resolve full unclipped GeoJSON MultiPolygon/Polygon boundary from loaded worldBoundaries bundle
+      const fullFeature: GeoJSON.Feature<
+        GeoJSON.Geometry,
+        Partial<CountryFeatureProperties> | GeoJSON.GeoJsonProperties
+      > =
+        cachedCountriesLookup(props?.isoNumeric ?? "", name ?? "") ?? {
+          type: "Feature",
+          id: feat.id,
+          properties: props ?? {},
+          geometry: feat.geometry,
+        };
+      const resolved = buildResolvedTerritory(fullFeature);
+      if (!resolved) return;
 
-      onSelectTerritoryRef.current({
-        name,
-        polygon: extracted.polygon,
-        center: extracted.center,
-        zoom: extracted.zoom,
-      });
+      onSelectTerritoryRef.current(resolved);
     });
 
+    map.on("style.load", () => {
+      styleReadyRef.current = true;
+      setMapReady(true);
+      handleMove();
+    });
     map.on("load", () => {
+      styleReadyRef.current = true;
       setMapReady(true);
       handleMove();
     });
@@ -724,6 +825,7 @@ export function GeoMap({
     });
 
     return () => {
+      styleReadyRef.current = false;
       mapRef.current = null;
       map.remove();
     };
@@ -733,34 +835,65 @@ export function GeoMap({
   // Populate vector country polygons, borders, coastlines once worldBoundaries loads
   useEffect(() => {
     let active = true;
+    let cancelWait: (() => void) | null = null;
     void loadWorldBoundaries().then((bundle) => {
       if (!active) return;
       setBoundaries(bundle);
-      const applySources = () => {
-        const map = mapRef.current;
-        if (!map) return;
-        const cSrc = map.getSource("countries") as maplibregl.GeoJSONSource | undefined;
-        const bSrc = map.getSource("borders") as maplibregl.GeoJSONSource | undefined;
-        const kSrc = map.getSource("coastlines") as maplibregl.GeoJSONSource | undefined;
+      const map = mapRef.current;
+      if (!map) return;
+      cancelWait = runWhenStyleReady(map, () => {
+        const currentMap = mapRef.current;
+        if (!currentMap) return;
+        const cSrc = currentMap.getSource("countries") as maplibregl.GeoJSONSource | undefined;
+        const bSrc = currentMap.getSource("borders") as maplibregl.GeoJSONSource | undefined;
+        const kSrc = currentMap.getSource("coastlines") as maplibregl.GeoJSONSource | undefined;
         cSrc?.setData(bundle.countries as GeoJSON.GeoJSON);
         bSrc?.setData(bundle.borders as GeoJSON.GeoJSON);
         kSrc?.setData(bundle.coastlines as GeoJSON.GeoJSON);
         setViewTick((t) => (t + 1) % 100000);
-      };
-      const map = mapRef.current;
-      if (map?.isStyleLoaded()) applySources();
-      else map?.once("load", applySources);
+      });
     });
     return () => {
       active = false;
+      cancelWait?.();
     };
-  }, []);
+  }, [runWhenStyleReady]);
 
   // Keep GeoJSON cached feature lookup handy for unclipped polygon click extraction
   const cachedCountriesLookup = useCallback(
-    (name: string) => boundaries?.countries.features.find((f) => f.properties.name === name) ?? null,
+    (isoNumeric: string, name: string) =>
+      boundaries?.countries.features.find(
+        (f) => (isoNumeric && f.properties.isoNumeric === isoNumeric) || (name && f.properties.name === name)
+      ) ?? null,
     [boundaries]
   );
+
+  // Sync authoritative GeoJSON territory boundary directly into WebGL source
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const syncSelectedBoundary = () => {
+      const src = map.getSource("selected-boundary") as maplibregl.GeoJSONSource | undefined;
+      if (!src) return;
+      if (boundaryGeometry) {
+        src.setData({
+          type: "FeatureCollection",
+          features: [
+            {
+              type: "Feature",
+              properties: {},
+              geometry: boundaryGeometry,
+            },
+          ],
+        });
+      } else {
+        src.setData(EMPTY_FC);
+      }
+    };
+
+    return runWhenStyleReady(map, syncSelectedBoundary);
+  }, [boundaryGeometry, mapReady, runWhenStyleReady]);
 
   // Sync BasemapMode palette smoothly without destroying map state
   useEffect(() => {
@@ -771,7 +904,7 @@ export function GeoMap({
       try {
         const activeTheme = BASEMAP_THEMES[basemapMode] ?? BASEMAP_THEMES.territories;
         if (map.getLayer("ocean-bg")) {
-          map.setPaintProperty("ocean-bg", "background-color", activeTheme.land);
+          map.setPaintProperty("ocean-bg", "background-color", activeTheme.ocean);
         }
         if (map.getLayer("earth-base-layer")) {
           map.setPaintProperty("earth-base-layer", "raster-opacity", activeTheme.satelliteOpacity);
@@ -784,7 +917,10 @@ export function GeoMap({
             activeTheme.land,
           ]);
           map.setPaintProperty("countries-fill", "fill-opacity", [
-            "case", ["boolean", ["feature-state", "hover"], false], 0.26, 0,
+            "case",
+            ["boolean", ["feature-state", "hover"], false],
+            activeTheme.satelliteOpacity > 0 ? 0.45 : Math.max(0.98, activeTheme.landOpacity),
+            activeTheme.landOpacity,
           ]);
         }
         for (const [id, property, color] of [
@@ -804,14 +940,20 @@ export function GeoMap({
           map.setPaintProperty(id, "text-halo-color", activeTheme.placeHalo);
           map.setLayoutProperty(id, "visibility", showLabels ? "visible" : "none");
         }
-        if (map.getLayer("preset-basins-line")) {
-          map.setPaintProperty("preset-basins-line", "line-color", activeTheme.basinLine);
-        }
         if (map.getLayer("coastlines-line")) {
           map.setPaintProperty("coastlines-line", "line-color", activeTheme.coast);
         }
         if (map.getLayer("borders-line")) {
           map.setPaintProperty("borders-line", "line-color", activeTheme.border);
+        }
+        if (map.getLayer("selected-boundary-fill")) {
+          map.setPaintProperty("selected-boundary-fill", "fill-color", activeTheme.selectedFill);
+        }
+        if (map.getLayer("selected-boundary-casing")) {
+          map.setPaintProperty("selected-boundary-casing", "line-color", activeTheme.selectedHalo);
+        }
+        if (map.getLayer("selected-boundary-line")) {
+          map.setPaintProperty("selected-boundary-line", "line-color", activeTheme.selectedLine);
         }
         if (map.getLayer("graticule-layer")) {
           map.setPaintProperty("graticule-layer", "line-color", activeTheme.graticule);
@@ -828,16 +970,29 @@ export function GeoMap({
           "sky-horizon-blend": mode === "globe" ? 0.9 : 0,
           "atmosphere-blend": mode === "globe" ? 0.34 : 0,
         });
-      } catch {
-        // Ignore transient style state before initial load
+      } catch (err) {
+        console.warn("BREATHE basemap theme update skipped:", err);
       }
     };
 
-    if (map.isStyleLoaded()) applyTheme();
-    else map.once("load", applyTheme);
-  }, [basemapMode, mode, showGrid]);
+    return runWhenStyleReady(map, applyTheme);
+  }, [basemapMode, mode, showGrid, showLabels, runWhenStyleReady]);
 
-  // Synchronize projection mode cleanly (globe <-> 2D mercator) preventing horizontal strip compression
+  // Keep flat minZoom synchronized dynamically when viewport resizes
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || mode !== "flat" || !isMapStyleReady(map)) return;
+    try {
+      map.setMinZoom(minFlatZoom);
+      if (map.getZoom() < minFlatZoom) {
+        map.setZoom(minFlatZoom);
+      }
+    } catch {
+      // Ignore transient state
+    }
+  }, [mode, minFlatZoom, mapReady, isMapStyleReady]);
+
+  // Synchronize projection mode cleanly (globe <-> 2D mercator) immediately once style is parsed
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -845,17 +1000,25 @@ export function GeoMap({
     const applyProjection = () => {
       try {
         const activeTheme = BASEMAP_THEMES[basemapMode] ?? BASEMAP_THEMES.territories;
+        const flatMin = minFlatZoomRef.current;
+        if (map.isMoving()) {
+          map.stop();
+        }
         map.setProjection({ type: mode === "globe" ? "globe" : "mercator" });
         map.setRenderWorldCopies(false);
-        map.setMinZoom(mode === "globe" ? 1.05 : compact ? 1.2 : 1.75);
         map.setMaxBounds(
           mode === "flat"
             ? [
-                [-179.9, -76],
-                [179.9, 76],
+                [-179.9, -82],
+                [179.9, 82],
               ]
             : null
         );
+        map.setMinZoom(mode === "globe" ? 1.05 : flatMin);
+        if (mode === "flat") {
+          map.setPitch(0);
+          map.setBearing(0);
+        }
         map.setSky({
           "sky-color": mode === "globe" ? "#f6f5f0" : activeTheme.ocean,
           "horizon-color": mode === "globe" ? "#eef1eb" : activeTheme.ocean,
@@ -866,37 +1029,51 @@ export function GeoMap({
 
         // Auto-frame active region cleanly when switching Globe -> 2D flat map
         if (prevModeRef.current === "globe" && mode === "flat") {
+          const viewProps = latestViewPropsRef.current;
+          if (viewProps.center) {
+            lastPropViewRef.current = {
+              lat: viewProps.center.lat,
+              lon: viewProps.center.lon,
+              zoom: Math.max(flatMin, viewProps.zoom),
+            };
+          }
           programmaticMoveRef.current = true;
+          const activeGeom = boundaryGeometryRef.current;
           const activePts = polygonRef.current;
-          if (activePts.length >= 3) {
-            const b = computeBounds(activePts);
+          if (activeGeom || activePts.length >= 3) {
+            const b = activeGeom ? computePrimaryFocusBounds(activeGeom).bounds : computeBounds(activePts);
             map.fitBounds(
               [
                 [b.west, b.south],
                 [b.east, b.north],
               ],
-              { padding: 68, minZoom: 2.8, maxZoom: 6.6, duration: prefersReducedMotion() ? 0 : 480 }
+              {
+                padding: 68,
+                minZoom: Math.max(flatMin, 1.4),
+                maxZoom: 6.8,
+                duration: prefersReducedMotion() ? 0 : 420,
+              }
             );
           } else {
             map.easeTo({
-              zoom: Math.max(3.2, map.getZoom()),
-              duration: prefersReducedMotion() ? 0 : 420,
+              zoom: Math.max(flatMin, map.getZoom()),
+              duration: prefersReducedMotion() ? 0 : 380,
             });
           }
         }
         prevModeRef.current = mode;
         map.resize();
+        map.triggerRepaint();
         setViewTick((t) => (t + 1) % 100000);
-      } catch {
-        // Style might still be loading
+      } catch (err) {
+        console.warn("BREATHE projection transition error:", err);
       }
     };
 
-    if (map.isStyleLoaded()) applyProjection();
-    else map.once("load", applyProjection);
+    return runWhenStyleReady(map, applyProjection);
     // Keep theme sync separate in applyTheme; only re-run projection switch on mode/compact
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, compact]);
+  }, [mode, compact, runWhenStyleReady]);
 
   // Fly/ease smoothly when external center/zoom props change programmatically
   useEffect(() => {
@@ -908,7 +1085,7 @@ export function GeoMap({
       : 99;
     if (dist < 0.08) return;
 
-    const clampedZoom = mode === "flat" ? Math.max(compact ? 1.2 : 1.75, zoom) : zoom;
+    const clampedZoom = mode === "flat" ? Math.max(minFlatZoomRef.current, zoom) : zoom;
     lastPropViewRef.current = { lat: center.lat, lon: center.lon, zoom: clampedZoom };
     programmaticMoveRef.current = true;
     const duration = prefersReducedMotion() ? 0 : 620;
@@ -937,9 +1114,8 @@ export function GeoMap({
       }
     };
 
-    if (map.isStyleLoaded()) syncLayers();
-    else map.once("load", syncLayers);
-  }, [layer, timeIndex, layerVisible, layerOpacity]);
+    return runWhenStyleReady(map, syncLayers);
+  }, [layer, timeIndex, layerVisible, layerOpacity, runWhenStyleReady]);
 
   // Keep scroll zoom active while temporarily locking pan for active draw tools
   useEffect(() => {
@@ -1110,8 +1286,17 @@ export function GeoMap({
     .map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`)
     .join(" ");
 
+  const isTerritoryBoundary = Boolean(boundaryGeometry && boundaryKind !== "drawn");
+
   const projectedMidpoints = useMemo(() => {
-    if (!map || !onPolygonChange || tool !== "select" || polygon.length < 3 || activeZoom < 2.2) {
+    if (
+      !map ||
+      isTerritoryBoundary ||
+      !onPolygonChange ||
+      tool !== "select" ||
+      polygon.length < 3 ||
+      activeZoom < 2.2
+    ) {
       return [];
     }
     return polygon.map((pt, i) => {
@@ -1130,7 +1315,7 @@ export function GeoMap({
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, onPolygonChange, tool, polygon, activeZoom, viewTick, mode]);
+  }, [map, isTerritoryBoundary, onPolygonChange, tool, polygon, activeZoom, viewTick, mode]);
 
   const projectedStations = useMemo(() => {
     if (!map || !showLabels || compact) return [];
@@ -1152,11 +1337,12 @@ export function GeoMap({
 
   const scaleInfo = useMemo(() => niceScaleBar(activeCenter.lat, activeZoom), [activeCenter.lat, activeZoom]);
   const isDrawingTool = Boolean(onPolygonChange && tool !== "select");
+  const showDrawnPolygon = !isTerritoryBoundary || isDrawingTool || draft.length > 0;
 
   const handleZoomStep = (delta: number) => {
     const m = mapRef.current;
     if (!m) return;
-    const floor = mode === "globe" ? 1.05 : compact ? 1.2 : 1.75;
+    const floor = mode === "globe" ? 1.05 : minFlatZoom;
     m.easeTo({
       zoom: Math.max(floor, Math.min(9.0, m.getZoom() + delta)),
       duration: prefersReducedMotion() ? 0 : 280,
@@ -1166,8 +1352,8 @@ export function GeoMap({
   const handleFitRegion = () => {
     const m = mapRef.current;
     if (!m) return;
-    if (polygon.length >= 3) {
-      const b = computeBounds(polygon);
+    if (boundaryGeometry || polygon.length >= 3) {
+      const b = boundaryGeometry ? computePrimaryFocusBounds(boundaryGeometry).bounds : computeBounds(polygon);
       m.fitBounds(
         [
           [b.west, b.south],
@@ -1175,8 +1361,8 @@ export function GeoMap({
         ],
         {
           padding: 64,
-          minZoom: mode === "flat" ? 2.4 : 1.5,
-          maxZoom: 7.2,
+          minZoom: mode === "flat" ? Math.max(minFlatZoom, 1.4) : 1.5,
+          maxZoom: 7.4,
           duration: prefersReducedMotion() ? 0 : 480,
         }
       );
@@ -1184,17 +1370,27 @@ export function GeoMap({
     }
     m.easeTo({
       center: [normalizeLon(center?.lon ?? 105.75), clampLat(center?.lat ?? 21.1)],
-      zoom: mode === "globe" ? 2.3 : Math.max(3.6, zoom),
+      zoom: mode === "globe" ? 2.3 : Math.max(minFlatZoom, zoom),
       duration: prefersReducedMotion() ? 0 : 480,
     });
   };
 
-  const handleResetGlobe = () => {
+  const handleResetWorldView = () => {
     const m = mapRef.current;
     if (!m) return;
+    if (mode === "flat") {
+      m.easeTo({
+        center: [14, 15],
+        zoom: minFlatZoom,
+        pitch: 0,
+        bearing: 0,
+        duration: prefersReducedMotion() ? 0 : 480,
+      });
+      return;
+    }
     m.easeTo({
       center: [normalizeLon(center?.lon ?? 105.75), clampLat(center?.lat ?? 21.1)],
-      zoom: mode === "globe" ? 2.2 : 3.2,
+      zoom: 2.2,
       duration: prefersReducedMotion() ? 0 : 480,
     });
   };
@@ -1259,10 +1455,10 @@ export function GeoMap({
           pointerEvents: isDrawingTool || dragRef.current?.kind === "vertex" ? "all" : "none",
         }}
       >
-        {projectedPoly.length >= 3 && (
+        {showDrawnPolygon && projectedPoly.length >= 3 && (
           <polygon points={polyPointsStr} className="b-region-polygon" />
         )}
-        {(projectedPoly.length === 2 || (tool === "polygon" && draft.length >= 2)) && (
+        {showDrawnPolygon && (projectedPoly.length === 2 || (tool === "polygon" && draft.length >= 2)) && (
           <polyline
             points={projectedPoly
               .filter((p) => p.visible)
@@ -1287,21 +1483,23 @@ export function GeoMap({
             );
           })}
 
-        {projectedMidpoints.map((mid) =>
-          mid.visible ? (
-            <g
-              key={`mid-${mid.index}`}
-              className="b-region-midpoint"
-              style={{ pointerEvents: "all", cursor: "pointer" }}
-              onClick={(e) => insertVertexAt(mid.index, mid.geo, e)}
-            >
-              <circle cx={mid.x} cy={mid.y} r={5} />
-              <path d={`M ${mid.x - 2.5} ${mid.y} H ${mid.x + 2.5} M ${mid.x} ${mid.y - 2.5} V ${mid.y + 2.5}`} />
-            </g>
-          ) : null
-        )}
+        {!isTerritoryBoundary &&
+          projectedMidpoints.map((mid) =>
+            mid.visible ? (
+              <g
+                key={`mid-${mid.index}`}
+                className="b-region-midpoint"
+                style={{ pointerEvents: "all", cursor: "pointer" }}
+                onClick={(e) => insertVertexAt(mid.index, mid.geo, e)}
+              >
+                <circle cx={mid.x} cy={mid.y} r={5} />
+                <path d={`M ${mid.x - 2.5} ${mid.y} H ${mid.x + 2.5} M ${mid.x} ${mid.y - 2.5} V ${mid.y + 2.5}`} />
+              </g>
+            ) : null
+          )}
 
-        {onPolygonChange &&
+        {!isTerritoryBoundary &&
+          onPolygonChange &&
           tool === "select" &&
           polygon.map((pt, index) => {
             if (!map || !isFrontHemisphere(pt, activeCenter, mode, activeZoom)) return null;
@@ -1321,6 +1519,22 @@ export function GeoMap({
           })}
 
       </svg>
+
+      {mode === "flat" && !compact && (
+        <MapScanOverlay
+          map={map}
+          mapReady={mapReady}
+          containerSize={containerSize}
+          viewTick={viewTick}
+          layer={layer}
+          timeIndex={timeIndex}
+          polygon={polygon}
+          boundaryGeometry={boundaryGeometry}
+          mapping={mapping}
+          isLightBasemap={theme.isLight}
+          hideTrigger={isDrawingTool && draft.length > 0}
+        />
+      )}
 
       {projectedStations.length > 0 && (
         <div className="b-station-layer" aria-hidden={!onSelectStation}>
@@ -1378,7 +1592,12 @@ export function GeoMap({
           <button type="button" onClick={handleFitRegion} aria-label="Fit active region" title="Fit active region">
             <Maximize2 size={13} />
           </button>
-          <button type="button" onClick={handleResetGlobe} aria-label="Center view" title="Center view">
+          <button
+            type="button"
+            onClick={handleResetWorldView}
+            aria-label={mode === "flat" ? "Full flat world view" : "Center globe view"}
+            title={mode === "flat" ? "Full flat world view" : "Center globe view"}
+          >
             <Compass size={14} />
           </button>
         </div>

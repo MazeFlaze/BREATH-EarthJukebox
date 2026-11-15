@@ -16,8 +16,8 @@ import {
   Volume2,
   X,
 } from "lucide-react";
-import { dataSourceUrl, formatUtc, getLayerDefinition, layers, timeSlots } from "@/lib/breatheData";
-import type { BasemapMode, LayerKey } from "@/types/breathe";
+import { dataSourceUrl, formatUtc, getLayerDefinition, layers, presetSelections, timeSlots } from "@/lib/breatheData";
+import type { BasemapMode, GeographicSelection, LayerKey } from "@/types/breathe";
 
 const BASEMAP_OPTIONS: Array<{ value: BasemapMode; label: string }> = [
   { value: "territories", label: "Territories" },
@@ -354,6 +354,72 @@ export function Timeline({
 
 export function SectionCaption({ children }: { children: React.ReactNode }) {
   return <div className="b-section-caption">{children}</div>;
+}
+
+export function TerritorySelect({
+  selection,
+  territories,
+  onSelectValue,
+  className = "b-text-input",
+  ariaLabel = "Active geographic territory",
+}: {
+  selection: GeographicSelection;
+  territories: Array<{ id: string; isoNumeric: string; name: string }>;
+  onSelectValue: (value: string) => void;
+  className?: string;
+  ariaLabel?: string;
+}) {
+  const curatedCodes = new Set(
+    presetSelections.map((p) => p.territoryCode).filter((c): c is string => Boolean(c))
+  );
+  const additionalTerritories = territories.filter((t) => !curatedCodes.has(t.isoNumeric));
+
+  const matchedPreset = presetSelections.find(
+    (p) =>
+      p.id === selection.id ||
+      (selection.boundaryKind !== "drawn" &&
+        selection.territoryCode &&
+        p.territoryCode === selection.territoryCode)
+  );
+  const matchedOther =
+    !matchedPreset && selection.boundaryKind !== "drawn"
+      ? additionalTerritories.find(
+          (t) =>
+            t.id === selection.id ||
+            (selection.territoryCode && t.isoNumeric === selection.territoryCode)
+        )
+      : undefined;
+
+  const value = matchedPreset?.id ?? matchedOther?.id ?? "custom";
+
+  return (
+    <select
+      className={className}
+      aria-label={ariaLabel}
+      value={value}
+      onChange={(e) => {
+        if (e.target.value !== "custom") onSelectValue(e.target.value);
+      }}
+    >
+      <optgroup label="Curated territories">
+        {presetSelections.map((preset) => (
+          <option key={preset.id} value={preset.id}>
+            {preset.name}
+          </option>
+        ))}
+      </optgroup>
+      {additionalTerritories.length > 0 && (
+        <optgroup label="All countries & territories">
+          {additionalTerritories.map((territory) => (
+            <option key={territory.id} value={territory.id}>
+              {territory.name}
+            </option>
+          ))}
+        </optgroup>
+      )}
+      {value === "custom" && <option value="custom">{selection.name}</option>}
+    </select>
+  );
 }
 
 export function SiteFooter() {

@@ -1,5 +1,7 @@
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Tuple
+import hashlib
+import json
 import pandas as pd
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -48,8 +50,23 @@ class RegionQueryService:
         except Exception:
             raise HTTPException(status_code=422, detail=f"Invalid ISO 8601 timestamp: '{request.timestamp}'")
 
+        polygon_rings: Optional[List[List[Tuple[float, float]]]] = None
+        if request.polygons:
+            polygon_rings = [[(pt.lat, pt.lon) for pt in ring] for ring in request.polygons]
+        elif request.polygon:
+            polygon_rings = [[(pt.lat, pt.lon) for pt in request.polygon]]
+
         if request.bounds is not None:
             bbox = request.bounds
+        elif polygon_rings:
+            all_lats = [lat for ring in polygon_rings for (lat, _) in ring]
+            all_lons = [lon for ring in polygon_rings for (_, lon) in ring]
+            bbox = BoundingBoxInput(
+                latMin=min(all_lats),
+                latMax=max(all_lats),
+                lonMin=min(all_lons),
+                lonMax=max(all_lons),
+            )
         else:
             assert request.center is not None
             bbox = BoundingBoxInput(
@@ -58,6 +75,13 @@ class RegionQueryService:
                 lonMin=request.center.lon - request.deltaDeg,
                 lonMax=request.center.lon + request.deltaDeg,
             )
+
+        polygon_hash = (
+            hashlib.sha256(json.dumps(polygon_rings, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
+            if polygon_rings
+            else "bbox"
+        )
+        mask_mode = "polygon" if polygon_rings else "bounds"
 
         cache_key = app_cache.create_key(
             "jukebox_region",
@@ -69,6 +93,7 @@ class RegionQueryService:
                 "latMax": round(bbox.latMax, 4),
                 "lonMin": round(bbox.lonMin, 4),
                 "lonMax": round(bbox.lonMax, 4),
+                "polygonHash": polygon_hash,
                 "normalizationMethod": request.normalizationMethod,
             },
         )
@@ -101,7 +126,7 @@ class RegionQueryService:
             )
 
         with NetCDFProcessor.open_dataset(file_path) as ds:
-            if request.bounds is not None:
+            if request.bounds is not None or polygon_rings is not None:
                 raw_summary = NetCDFProcessor.extract_bbox_summary(
                     ds=ds,
                     variable=request.variable,
@@ -110,6 +135,7 @@ class RegionQueryService:
                     lon_min=bbox.lonMin,
                     lon_max=bbox.lonMax,
                     timestamp=py_dt,
+                    polygon_rings=polygon_rings,
                 )
             else:
                 assert request.center is not None
@@ -139,6 +165,7 @@ class RegionQueryService:
 
         response = RegionJukeboxResponse(
             mode="region",
+            maskMode=mask_mode,
             datasetId=request.datasetId,
             variable=request.variable,
             timestamp=raw_summary.get("timestamp") or iso_time,
