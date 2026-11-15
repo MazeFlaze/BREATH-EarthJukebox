@@ -1,5 +1,7 @@
 # Demo local: phối khí theo cấu trúc dữ liệu
 
+> Phiên bản hợp nhất mới thêm timeline nhiều timestamp và temporal mapping riêng; xem [UNIFIED_DEMO_LOCAL.md](UNIFIED_DEMO_LOCAL.md). Bản mới đã đạt typecheck/lint và 35 test; build/browser QA chưa chạy. Các kết quả bên dưới là lịch sử của bản phối khí một snapshot.
+
 Phạm vi: bản thử để người dùng nghe, không stage/commit/push, không chạy downloader NASA. `/demo` tiếp tục nằm trong `.gitignore`. Dùng native cache, checksum và preprocessing hiện có; không đổi API backend, dữ liệu, đơn vị hay calibration A.
 
 ## Kiểm tra bản mới

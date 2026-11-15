@@ -1,5 +1,7 @@
 # Demo grid chi tiết — Focus và Native Spectral trong 3/5/7 phút
 
+> Đợt sửa mới hợp nhất demo và nhiều timestamp; xem [UNIFIED_DEMO_LOCAL.md](UNIFIED_DEMO_LOCAL.md). Bản mới đã đạt typecheck/lint và 35 test sau khi được cho phép; build/browser QA chưa chạy. Mô tả và kết quả kiểm chứng bên dưới thuộc phiên bản trước.
+
 > Bổ sung mới: `/demo` mặc định dùng phối khí theo cấu trúc dữ liệu; Scientific và Harmonic cũ vẫn có để đối chiếu. Xem [CONTEXT_ORCHESTRATION_LOCAL_DEMO.md](CONTEXT_ORCHESTRATION_LOCAL_DEMO.md) cho mapping mới, giới hạn và cách kiểm tra. Phần mô tả Harmonic dưới đây ghi lại bản legacy.
 
 Người dùng đã chấp thuận phạm vi sau nghiên cứu: một chất tại một snapshot, thời lượng 3/5/7 phút, Focus tổng quan là mặc định, Native Spectral là thử nghiệm và có zoom/solo để nghe chi tiết. Đây là triển khai local để người dùng nghiệm thu; chưa commit/push hoặc thay đổi GitHub. Không chạy downloader NASA.
