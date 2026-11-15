@@ -7,8 +7,25 @@ from ..utils.logger import logger
 
 Base = declarative_base()
 
+def normalize_database_url(url: str) -> str:
+    """Normalize database URL for SQLAlchemy, ensuring proper driver prefix for PostgreSQL/Neon."""
+    if not url:
+        return url
+    # Strip channel_binding=require as it can hang with libpq/psycopg under certain TLS proxies
+    if "channel_binding=" in url:
+        import re
+        url = re.sub(r"[?&]channel_binding=[^&]*", "", url)
+        if "?" not in url and "&" in url:
+            url = url.replace("&", "?", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg://", 1)
+    if url.startswith("postgresql://") and not url.startswith("postgresql+"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url
+
+
 # Resolve SQLite path relative to backend directory if relative URL is given
-db_url = settings.DATABASE_URL
+db_url = normalize_database_url(settings.DATABASE_URL)
 if db_url.startswith("sqlite:///"):
     sqlite_path_str = db_url.replace("sqlite:///", "")
     if sqlite_path_str.startswith("backend/"):
@@ -66,6 +83,7 @@ def init_db() -> None:
                         ingestion_service.ingest_local_file(nc_file, db=session)
                     except Exception as e:
                         logger.warning(f"Could not auto-bootstrap {nc_file.name}: {e}")
+        session.commit()
     _db_initialized = True
 
 

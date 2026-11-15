@@ -16,6 +16,7 @@ from ..repositories.dataset_repository import DatasetRepository
 from ..repositories.observation_repository import ObservationRepository
 from ..repositories.location_repository import LocationRepository
 from ..utils.logger import logger
+from ..utils.storage import get_portable_storage_path
 
 
 class IngestionService:
@@ -108,7 +109,7 @@ class IngestionService:
             asset_id=asset_id,
             dataset_source_id=source.id,
             original_filename=target_path.name,
-            storage_path=str(target_path),
+            storage_path=get_portable_storage_path(target_path),
             checksum_sha256=checksum,
             time_start=time_start,
             time_end=time_end,
@@ -132,6 +133,16 @@ class IngestionService:
                 )
             preset_locs = LocationRepository.list_locations(db, presets_only=True)
 
+        # Pre-fetch existing samples for this source and timestamp to avoid round-trips
+        from ..models.entities import ObservationSample
+        existing_samples_map = {
+            (s.variable, round(float(s.grid_latitude), 4), round(float(s.grid_longitude), 4)): s
+            for s in db.query(ObservationSample).filter(
+                ObservationSample.dataset_source_id == source.id,
+                ObservationSample.timestamp_utc == time_start,
+            ).all()
+        }
+
         with NetCDFProcessor.open_dataset(target_path) as ds:
             for var_name, var_info in self.provider.list_variables().items():
                 if var_name not in ds.data_vars:
@@ -146,21 +157,36 @@ class IngestionService:
                             lon=loc.longitude,
                             timestamp=time_start,
                         )
-                        ObservationRepository.upsert_sample(
-                            db=db,
-                            dataset_source_id=source.id,
-                            dataset_asset_id=asset.id,
-                            grid_lat=pt_data["grid_coordinates"]["lat"],
-                            grid_lon=pt_data["grid_coordinates"]["lon"],
-                            timestamp_utc=time_start,
-                            variable=var_name,
-                            value=pt_data["value"],
-                            unit=pt_data["unit"],
-                            quality_status=pt_data["quality"],
-                        )
+                        grid_lat = pt_data["grid_coordinates"]["lat"]
+                        grid_lon = pt_data["grid_coordinates"]["lon"]
+                        sample_key = (var_name, round(float(grid_lat), 4), round(float(grid_lon), 4))
+
+                        if sample_key in existing_samples_map:
+                            sample = existing_samples_map[sample_key]
+                            sample.value = pt_data["value"]
+                            sample.unit = pt_data["unit"]
+                            sample.quality_status = pt_data["quality"]
+                            sample.dataset_asset_id = asset.id
+                        else:
+                            sample = ObservationSample(
+                                dataset_source_id=source.id,
+                                dataset_asset_id=asset.id,
+                                grid_latitude=grid_lat,
+                                grid_longitude=grid_lon,
+                                timestamp_utc=time_start,
+                                variable=var_name,
+                                value=pt_data["value"],
+                                unit=pt_data["unit"],
+                                quality_status=pt_data["quality"],
+                            )
+                            db.add(sample)
+                            existing_samples_map[sample_key] = sample
+
                         materialized_count += 1
                     except Exception as e:
                         logger.warning(f"Could not materialize sample for {loc.name} / {var_name}: {e}")
+
+        db.commit()
 
         # 4. Invalidate cache
         app_cache.invalidate_dataset(source.id)
