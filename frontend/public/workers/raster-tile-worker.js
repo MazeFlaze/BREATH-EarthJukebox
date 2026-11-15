@@ -163,21 +163,57 @@ function decodeColormapNormalized(r, g, b, a, cmap) {
 }
 
 /**
- * Smooths display scalar norms using a separable 2D Gaussian/binomial filter [1, 4, 6, 4, 1] / 16.
- * Dissolves 0.25-deg nearest-neighbor pcolormesh grid blocks into silky continuous gradients,
- * while strictly preserving ocean masking boundaries (-1).
+ * Smooths display scalar norms using a separable 2D Gaussian/binomial filter [1, 4, 6, 4, 1] / 16
+ * with adaptive hole-infilling for inland missing data gaps.
+ * Dissolves 0.25-deg nearest-neighbor pcolormesh grid blocks and small inland missing spots into
+ * silky continuous gradients, while strictly preserving ocean masking boundaries (-1).
  */
 function smoothDisplayNorms(norms, width, height) {
+  // Infill isolated inland no-data gaps (holes) where cells are surrounded by valid data
+  // Ocean has few/no valid neighbors, while inland gaps are surrounded by valid land cells
+  const infilled = new Float32Array(norms);
+  for (let pass = 0; pass < 4; pass += 1) {
+    let filledCount = 0;
+    for (let y = 1; y < height - 1; y += 1) {
+      const rowOffset = y * width;
+      for (let x = 0; x < width; x += 1) {
+        const centerIdx = rowOffset + x;
+        if (infilled[centerIdx] >= 0) continue;
+        let sum = 0;
+        let count = 0;
+        for (let dy = -1; dy <= 1; dy += 1) {
+          const nRow = (y + dy) * width;
+          for (let dx = -1; dx <= 1; dx += 1) {
+            if (dx === 0 && dy === 0) continue;
+            let nx = x + dx;
+            if (nx < 0) nx += width;
+            else if (nx >= width) nx -= width;
+            const v = infilled[nRow + nx];
+            if (v >= 0) {
+              sum += v;
+              count += 1;
+            }
+          }
+        }
+        if (count >= 4) {
+          infilled[centerIdx] = sum / count;
+          filledCount += 1;
+        }
+      }
+    }
+    if (filledCount === 0) break;
+  }
+
   const temp = new Float32Array(width * height);
   const out = new Float32Array(width * height);
   const weights = [1, 4, 6, 4, 1];
 
-  // Horizontal pass: kernel [1, 4, 6, 4, 1] / 16
+  // Horizontal pass: kernel [1, 4, 6, 4, 1] / 16 on infilled data
   for (let y = 0; y < height; y += 1) {
     const rowOffset = y * width;
     for (let x = 0; x < width; x += 1) {
       const centerIdx = rowOffset + x;
-      const centerVal = norms[centerIdx];
+      const centerVal = infilled[centerIdx];
       if (centerVal < 0) {
         temp[centerIdx] = -1;
         continue;
@@ -188,7 +224,7 @@ function smoothDisplayNorms(norms, width, height) {
         let nx = x + k;
         if (nx < 0) nx += width;
         else if (nx >= width) nx -= width;
-        const v = norms[rowOffset + nx];
+        const v = infilled[rowOffset + nx];
         if (v >= 0) {
           const w = weights[k + 2];
           sum += v * w;
