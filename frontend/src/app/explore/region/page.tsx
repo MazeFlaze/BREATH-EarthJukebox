@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Hand,
+  Info,
   PenTool,
   Redo2,
   RotateCcw,
@@ -26,6 +27,7 @@ export default function RegionPage() {
     selection,
     territories,
     activeLayer,
+    getLayerRestriction,
     basemapMode,
     layerVisible,
     layerOpacity,
@@ -54,6 +56,7 @@ export default function RegionPage() {
   const didFrameOnMountRef = useRef(false);
 
   const layerDef = getLayerDefinition(activeLayer);
+  const pm25Restriction = getLayerRestriction("PM25_RH35");
   const spec = useMemo(() => buildCompositionSpec(), [buildCompositionSpec]);
 
   useEffect(() => {
@@ -104,6 +107,13 @@ export default function RegionPage() {
             </div>
             <DataBadge label={regionStats.sourceLabel} />
           </div>
+
+          {pm25Restriction && (
+            <div className="b-layer-restriction-note is-compact" role="status" aria-live="polite">
+              <Info size={13} aria-hidden="true" />
+              <span>{pm25Restriction.notice}</span>
+            </div>
+          )}
 
           <div className="b-region-map">
             <div className="b-draw-toolbar" role="toolbar" aria-label="Polygon drawing tools">

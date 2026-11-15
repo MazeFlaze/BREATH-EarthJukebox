@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resolveTerritoryByCodeOrName } from "../src/lib/worldBoundaries";
+import { getRegionLayerRestriction } from "../src/lib/breatheData";
 import { sonificationService } from "../src/services/sonificationService";
 import type { AudioCompositionSpec } from "../src/types/breathe";
 
@@ -58,4 +59,48 @@ test("sonificationService: onVisualTick delivers audio frames without triggering
   const stoppedClock = sonificationService.getClockState();
   assert.equal(stoppedClock.playbackState, "idle");
   assert.equal(stoppedClock.currentStep, 0);
+});
+
+test("getRegionLayerRestriction hides PM2.5 for Greenland Arctic ice regimes and falls back to O3", () => {
+  const byCode = getRegionLayerRestriction(
+    { territoryCode: "304", id: "territory-304", name: "Greenland" },
+    "PM25_RH35"
+  );
+  assert.ok(byCode, "Greenland territoryCode 304 must restrict PM25_RH35");
+  assert.equal(byCode.fallbackLayer, "O3");
+
+  const byIdOnly = getRegionLayerRestriction({ id: "territory-304", name: "Custom" }, "PM25_RH35");
+  assert.ok(byIdOnly, "territory-304 id must restrict PM25_RH35");
+  assert.equal(byIdOnly.fallbackLayer, "O3");
+
+  const byNameOnly = getRegionLayerRestriction({ name: " greenland " }, "PM25_RH35");
+  assert.ok(byNameOnly, "Greenland name lookup must restrict PM25_RH35 case-insensitively");
+  assert.equal(byNameOnly.fallbackLayer, "O3");
+
+  for (const allowedLayer of ["O3", "CO", "NO2", "SO2"] as const) {
+    assert.equal(
+      getRegionLayerRestriction(
+        { territoryCode: "304", id: "territory-304", name: "Greenland" },
+        allowedLayer
+      ),
+      null,
+      `Greenland should allow ${allowedLayer}`
+    );
+  }
+
+  assert.equal(
+    getRegionLayerRestriction(
+      { territoryCode: "704", id: "territory-704", name: "Vietnam" },
+      "PM25_RH35"
+    ),
+    null
+  );
+  assert.equal(
+    getRegionLayerRestriction(
+      { territoryCode: "578", id: "territory-578", name: "Norway" },
+      "PM25_RH35"
+    ),
+    null
+  );
+  assert.equal(getRegionLayerRestriction(null, "PM25_RH35"), null);
 });
