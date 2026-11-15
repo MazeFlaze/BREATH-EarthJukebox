@@ -1,13 +1,14 @@
 import * as maplibregl from "maplibre-gl";
-import { frameFor, getLayerDefinition, timeSlots } from "@/lib/breatheData";
+import { frameFor, getLayerDefinition, timeSlots } from "./breatheData";
 import {
   computeBounds,
+  computePrimaryFocusBounds,
   findInteriorPoint,
   getGeometryPolygons,
   pointInPolygon,
   pointInPolygonCoords,
   serializePolygonRingsForApi,
-} from "@/lib/geoUtils";
+} from "./geoUtils";
 import type { GeoBounds, GeoPoint, LayerDefinition, LayerKey, RegionStats } from "@/types/breathe";
 
 type ColormapName = LayerDefinition["cmap"];
@@ -79,6 +80,29 @@ export interface DecodedRaster {
 
 const rasterCache = new Map<string, Promise<DecodedRaster | null>>();
 const displayRasterCache = new WeakMap<DecodedRaster, DecodedRaster>();
+
+interface ScalarGrid {
+  width: number;
+  height: number;
+  norms: Float32Array;
+}
+
+const scalarGridCache = new Map<string, Promise<ScalarGrid | null>>();
+const MAX_SCALAR_GRID_CACHE = 16;
+
+const HASH_SLOTS = 4096;
+const decodeMemoByCmap: Partial<Record<ColormapName, { keys: Int32Array; vals: Float32Array }>> = {};
+
+function getDecodeMemo(cmap: ColormapName): { keys: Int32Array; vals: Float32Array } {
+  let memo = decodeMemoByCmap[cmap];
+  if (!memo) {
+    const keys = new Int32Array(HASH_SLOTS);
+    keys.fill(-1);
+    memo = { keys, vals: new Float32Array(HASH_SLOTS) };
+    decodeMemoByCmap[cmap] = memo;
+  }
+  return memo;
+}
 
 /** Fill isolated black render gaps without changing the raster used for measurements. */
 function displayRaster(source: DecodedRaster): DecodedRaster {
@@ -172,11 +196,23 @@ function decodeColormapNormalized(
   cmap: ColormapName
 ): number | null {
   if (a < 24) return null;
+  const packed = (r << 16) | (g << 8) | b;
+  const memo = getDecodeMemo(cmap);
+  const slot = ((packed * 2654435761) >>> 20) & (HASH_SLOTS - 1);
+  if (memo.keys[slot] === packed) {
+    const cached = memo.vals[slot];
+    return cached < 0 ? null : cached;
+  }
+
   const drBg = r - BG_MASK_RGB[0];
   const dgBg = g - BG_MASK_RGB[1];
   const dbBg = b - BG_MASK_RGB[2];
   const bgDistSq = drBg * drBg + dgBg * dgBg + dbBg * dbBg;
-  if (bgDistSq < 180) return null;
+  if (bgDistSq < 180) {
+    memo.keys[slot] = packed;
+    memo.vals[slot] = -1;
+    return null;
+  }
 
   const lut = EXPANDED_LUTS[cmap];
   let bestIdx = 0;
@@ -192,7 +228,84 @@ function decodeColormapNormalized(
       bestIdx = i;
     }
   }
-  return bestIdx / (LUT_BINS - 1);
+  const norm = bestIdx / (LUT_BINS - 1);
+  memo.keys[slot] = packed;
+  memo.vals[slot] = norm;
+  return norm;
+}
+
+/**
+ * Decodes a GEOS-CF frame once into a compact normalized Float32Array (-1 = masked)
+ * while keeping display gap-filling isolated from measurement rasters.
+ */
+function getScalarGrid(
+  url: string,
+  cmap: ColormapName,
+  forDisplay: boolean
+): Promise<ScalarGrid | null> {
+  const key = `${url}::${cmap}::${forDisplay ? 1 : 0}`;
+  const existing = scalarGridCache.get(key);
+  if (existing) {
+    scalarGridCache.delete(key);
+    scalarGridCache.set(key, existing);
+    return existing;
+  }
+
+  if (scalarGridCache.size >= MAX_SCALAR_GRID_CACHE) {
+    const oldest = scalarGridCache.keys().next().value;
+    if (oldest !== undefined) scalarGridCache.delete(oldest);
+  }
+
+  const promise = (async (): Promise<ScalarGrid | null> => {
+    const original = await loadRasterPixels(url, 2048);
+    const raster = original ? (forDisplay ? displayRaster(original) : original) : null;
+    if (!raster) return null;
+    const total = raster.width * raster.height;
+    const norms = new Float32Array(total);
+    const data = raster.data;
+    for (let i = 0; i < total; i += 1) {
+      const idx = i * 4;
+      const t = decodeColormapNormalized(data[idx], data[idx + 1], data[idx + 2], data[idx + 3], cmap);
+      norms[i] = t === null ? -1 : t;
+    }
+    return { width: raster.width, height: raster.height, norms };
+  })().catch(() => {
+    scalarGridCache.delete(key);
+    return null;
+  });
+
+  scalarGridCache.set(key, promise);
+  return promise;
+}
+
+function sampleScalarSmooth(grid: ScalarGrid, lat: number, lon: number): number {
+  const x = ((((lon + 180) % 360) + 360) % 360) / 360 * grid.width - 0.5;
+  const y = Math.max(0, Math.min(grid.height - 1, ((90 - lat) / 180) * grid.height - 0.5));
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const fx = x - x0;
+  const fy = y - y0;
+  const ax = ((x0 % grid.width) + grid.width) % grid.width;
+  const bx = (ax + 1) % grid.width;
+  const by = Math.min(grid.height - 1, y0 + 1);
+  const norms = grid.norms;
+  const v00 = norms[y0 * grid.width + ax];
+  const v10 = norms[y0 * grid.width + bx];
+  const v01 = norms[by * grid.width + ax];
+  const v11 = norms[by * grid.width + bx];
+  if (v00 < 0 && v10 < 0 && v01 < 0 && v11 < 0) return -1;
+
+  let weightSum = 0;
+  let valSum = 0;
+  const w00 = (1 - fx) * (1 - fy);
+  const w10 = fx * (1 - fy);
+  const w01 = (1 - fx) * fy;
+  const w11 = fx * fy;
+  if (v00 >= 0) { valSum += v00 * w00; weightSum += w00; }
+  if (v10 >= 0) { valSum += v10 * w10; weightSum += w10; }
+  if (v01 >= 0) { valSum += v01 * w01; weightSum += w01; }
+  if (v11 >= 0) { valSum += v11 * w11; weightSum += w11; }
+  return weightSum >= 0.45 ? valSum / weightSum : -1;
 }
 
 function sampleEquirectangularPixel(
@@ -306,6 +419,46 @@ function intensityToEditorialRgba(t: number): [number, number, number, number] {
   ];
 }
 
+function writeEditorialRgba(t: number, out: Uint8ClampedArray, dst: number): boolean {
+  const clamped = t < 0 ? 0 : t > 1 ? 1 : t;
+  if (clamped < 0.18) return false;
+  let r: number;
+  let g: number;
+  let b: number;
+  let a: number;
+  if (clamped < 0.3) {
+    const k = (clamped - 0.18) / 0.12;
+    r = Math.round(28 + k * 24);
+    g = Math.round(82 + k * 54);
+    b = Math.round(74 + k * 46);
+    a = Math.round(k * 112);
+  } else if (clamped < 0.62) {
+    const k = (clamped - 0.3) / 0.32;
+    r = Math.round(52 + k * 138);
+    g = Math.round(136 + k * 56);
+    b = Math.round(120 - k * 8);
+    a = Math.round(112 + k * 58);
+  } else if (clamped < 0.85) {
+    const k = (clamped - 0.62) / 0.23;
+    r = Math.round(190 + k * 34);
+    g = Math.round(192 - k * 22);
+    b = Math.round(112 - k * 42);
+    a = Math.round(170 + k * 32);
+  } else {
+    const k = (clamped - 0.85) / 0.15;
+    r = Math.round(224 - k * 14);
+    g = Math.round(170 - k * 68);
+    b = Math.round(70 - k * 22);
+    a = Math.round(202 + k * 24);
+  }
+  if (a <= 0) return false;
+  out[dst] = r;
+  out[dst + 1] = g;
+  out[dst + 2] = b;
+  out[dst + 3] = a;
+  return true;
+}
+
 /**
  * Returns opaque pine-sage-amber RGB values for 2D scanline hit particles & glow filaments,
  * preserving the map's concentration color progression down into moderate low-plume ranges.
@@ -326,7 +479,7 @@ export async function loadLayerRaster(
   const safeIndex = Math.max(0, Math.min(timeSlots.length - 1, timeIndex));
   const frame = frameFor(layerKey, safeIndex);
   if (!frame) return null;
-  return loadRasterPixels(frame.imageUrl, 1280);
+  return loadRasterPixels(frame.imageUrl, 2048);
 }
 
 /**
@@ -522,6 +675,87 @@ function dispatchWorkerTile(
   });
 }
 
+let baseSatelliteWarmPromise: Promise<void> | null = null;
+let baseSatelliteWarmed = false;
+
+/** Indicates whether base NASA Blue Marble + cloud rasters were already warmed once this session. */
+export function isBaseSatelliteWarmed(): boolean {
+  return baseSatelliteWarmed;
+}
+
+/**
+ * Non-blockingly preloads NASA Blue Marble & cloud rasters inside the tile worker pool
+ * (or main-thread fallback if workers are unavailable) so first switching to Satellite
+ * never stalls UI animations or audio playback.
+ */
+export async function preloadBaseSatelliteAssets(): Promise<void> {
+  if (baseSatelliteWarmed) return;
+  if (baseSatelliteWarmPromise) return baseSatelliteWarmPromise;
+
+  baseSatelliteWarmPromise = (async () => {
+    const slots = getTileWorkerPool();
+    if (slots && slots.length > 0) {
+      await Promise.allSettled(
+        slots.map(
+          (slot) =>
+            new Promise<void>((resolve, reject) => {
+              const id = nextTileJobId;
+              nextTileJobId += 1;
+              slot.pending.set(id, {
+                resolve: () => resolve(),
+                reject,
+              });
+              try {
+                slot.worker.postMessage({ type: "preloadBase", id });
+              } catch (err) {
+                slot.pending.delete(id);
+                reject(err instanceof Error ? err : new Error("Worker preload error"));
+              }
+            })
+        )
+      );
+    } else {
+      await Promise.allSettled([
+        loadRasterPixels("/images/earth-blue-marble.png", 1600),
+        loadRasterPixels("/images/earth-clouds-hires.jpg", 1024),
+      ]);
+    }
+    baseSatelliteWarmed = true;
+  })().finally(() => {
+    if (!baseSatelliteWarmed) {
+      baseSatelliteWarmPromise = null;
+    }
+  });
+
+  return baseSatelliteWarmPromise;
+}
+
+/** Pre-decodes a target GEOS-CF timestamp frame inside the worker pool ahead of playback scrub. */
+export function prefetchOverlayFrame(layerKey: LayerKey, timeIndex: number): void {
+  const layer = getLayerDefinition(layerKey);
+  if (!layer.available || layerKey === "AOD") return;
+  const safeIndex = Math.max(0, Math.min(timeSlots.length - 1, timeIndex));
+  const frame = frameFor(layerKey, safeIndex);
+  if (!frame) return;
+
+  const slots = getTileWorkerPool();
+  if (slots && slots.length > 0) {
+    const targetSlot = slots[slots.length > 1 ? 1 : 0];
+    try {
+      targetSlot.worker.postMessage({
+        type: "preloadOverlay",
+        imageUrl: frame.imageUrl,
+        cmap: layer.cmap,
+      });
+    } catch {
+      // Ignore transient worker postMessage errors during unmount/prefetch
+    }
+    return;
+  }
+
+  void getScalarGrid(frame.imageUrl, layer.cmap, true);
+}
+
 async function renderTileOnMainThread(
   kind: string,
   parts: string[]
@@ -611,9 +845,8 @@ async function renderTileOnMainThread(
     const frame = frameFor(layerKey, timeIndex);
     if (!layer.available || !frame) return "EMPTY";
 
-    const original = await loadRasterPixels(frame.imageUrl, 1280);
-    const raster = original ? displayRaster(original) : null;
-    if (!raster) return "EMPTY";
+    const grid = await getScalarGrid(frame.imageUrl, layer.cmap, true);
+    if (!grid) return "EMPTY";
 
     const scale = 2 ** z;
     const lons = new Float64Array(TILE_SIZE);
@@ -626,17 +859,10 @@ async function renderTileOnMainThread(
       const lat = (Math.atan(Math.sinh(Math.PI * (1 - 2 * normY))) * 180) / Math.PI;
       const rowOffset = py * TILE_SIZE * 4;
       for (let px = 0; px < TILE_SIZE; px += 1) {
-        const [r, g, b, a] = sampleEquirectangularSmooth(raster, lat, lons[px]);
-        const t = decodeColormapNormalized(r, g, b, a, layer.cmap);
-        const dst = rowOffset + px * 4;
-        if (t !== null) {
-          const [or, og, ob, oa] = intensityToEditorialRgba(t);
-          if (oa > 0) {
+        const t = sampleScalarSmooth(grid, lat, lons[px]);
+        if (t >= 0) {
+          if (writeEditorialRgba(t, out, rowOffset + px * 4)) {
             hasOpaque = true;
-            out[dst] = or;
-            out[dst + 1] = og;
-            out[dst + 2] = ob;
-            out[dst + 3] = oa;
           }
         }
       }
@@ -648,9 +874,10 @@ async function renderTileOnMainThread(
 }
 
 async function tileEntryToProtocolResponse(
-  entry: TileCacheEntry
+  entry: TileCacheEntry,
+  signal?: AbortSignal
 ): Promise<maplibregl.GetResourceResponse<maplibregl.AddProtocolResponseData>> {
-  if (entry === "EMPTY") {
+  if (entry === "EMPTY" || signal?.aborted) {
     return { data: new ArrayBuffer(0) };
   }
 
@@ -659,10 +886,17 @@ async function tileEntryToProtocolResponse(
     if (typeof createImageBitmap === "function") {
       try {
         const bitmap = await createImageBitmap(imgData);
+        if (signal?.aborted) {
+          bitmap.close();
+          return { data: new ArrayBuffer(0) };
+        }
         return { data: bitmap };
       } catch {
         // Fall through to canvas PNG encoding
       }
+    }
+    if (signal?.aborted) {
+      return { data: new ArrayBuffer(0) };
     }
     const canvas = document.createElement("canvas");
     canvas.width = TILE_SIZE;
@@ -671,7 +905,7 @@ async function tileEntryToProtocolResponse(
     if (!ctx) return { data: new ArrayBuffer(0) };
     ctx.putImageData(imgData, 0, 0);
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
-    if (!blob) return { data: new ArrayBuffer(0) };
+    if (!blob || signal?.aborted) return { data: new ArrayBuffer(0) };
     return { data: await blob.arrayBuffer() };
   }
 
@@ -718,7 +952,7 @@ export function registerBreatheMapProtocol(ml: typeof maplibregl) {
       const cleanUrl = params.url.replace("breathe-earth://", "");
       const cached = getCachedTile(cleanUrl);
       if (cached !== undefined) {
-        return tileEntryToProtocolResponse(cached);
+        return tileEntryToProtocolResponse(cached, abortController.signal);
       }
 
       let tileJob = inFlightTileJobs.get(cleanUrl);
@@ -780,9 +1014,120 @@ export function registerBreatheMapProtocol(ml: typeof maplibregl) {
         return { data: new ArrayBuffer(0) };
       }
 
-      return tileEntryToProtocolResponse(resolved);
+      return tileEntryToProtocolResponse(resolved, abortController.signal);
     }
   );
+}
+
+interface PolygonSampleCells {
+  cellKeys: Int32Array;
+  cosWeights: Float32Array;
+}
+
+const geometryCellCache = new WeakMap<object, Map<string, PolygonSampleCells>>();
+const polygonCellCache = new Map<string, PolygonSampleCells>();
+const MAX_POLYGON_CELL_CACHE = 24;
+
+function buildPolygonSampleCells(
+  width: number,
+  height: number,
+  polygon: GeoPoint[],
+  boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon
+): PolygonSampleCells {
+  const keys: number[] = [];
+  const weights: number[] = [];
+  const visited = new Set<number>();
+
+  const scanBounds = (b: GeoBounds, hitTest: (lat: number, lon: number) => boolean) => {
+    const xMin = Math.max(0, Math.floor(((b.west + 180) / 360) * width));
+    const xMax = Math.min(width - 1, Math.ceil(((b.east + 180) / 360) * width));
+    const yMin = Math.max(0, Math.floor(((90 - b.north) / 180) * height));
+    const yMax = Math.min(height - 1, Math.ceil(((90 - b.south) / 180) * height));
+    const spanX = Math.max(1, xMax - xMin);
+    const spanY = Math.max(1, yMax - yMin);
+    const stepX = Math.max(1, Math.floor(spanX / 36));
+    const stepY = Math.max(1, Math.floor(spanY / 36));
+
+    for (let py = yMin; py <= yMax; py += stepY) {
+      const lat = 90 - ((py + 0.5) / height) * 180;
+      const cosW = Math.max(0.05, Math.cos((lat * Math.PI) / 180));
+      for (let px = xMin; px <= xMax; px += stepX) {
+        const cellKey = py * width + px;
+        if (visited.has(cellKey)) continue;
+        const lon = ((px + 0.5) / width) * 360 - 180;
+        if (!hitTest(lat, lon)) continue;
+        visited.add(cellKey);
+        keys.push(cellKey);
+        weights.push(cosW);
+      }
+    }
+  };
+
+  if (boundaryGeometry) {
+    const polys = getGeometryPolygons(boundaryGeometry);
+    for (const rings of polys) {
+      const outer = rings[0];
+      if (!outer || outer.length < 3) continue;
+      let west = Infinity;
+      let south = Infinity;
+      let east = -Infinity;
+      let north = -Infinity;
+      for (const c of outer) {
+        if (c[0] < west) west = c[0];
+        if (c[0] > east) east = c[0];
+        if (c[1] < south) south = c[1];
+        if (c[1] > north) north = c[1];
+      }
+      if (east - west > 175) continue;
+      scanBounds({ west, south, east, north }, (lat, lon) => pointInPolygonCoords(lat, lon, rings));
+    }
+  } else {
+    const bounds = computeBounds(polygon);
+    scanBounds(bounds, (lat, lon) => pointInPolygon(lat, lon, polygon));
+  }
+
+  return {
+    cellKeys: Int32Array.from(keys),
+    cosWeights: Float32Array.from(weights),
+  };
+}
+
+function getPolygonSampleCells(
+  width: number,
+  height: number,
+  polygon: GeoPoint[],
+  boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon
+): PolygonSampleCells {
+  const sizeKey = `${width}x${height}`;
+  if (boundaryGeometry) {
+    let bySize = geometryCellCache.get(boundaryGeometry);
+    const cached = bySize?.get(sizeKey);
+    if (cached) return cached;
+
+    const computed = buildPolygonSampleCells(width, height, polygon, boundaryGeometry);
+    if (!bySize) {
+      bySize = new Map();
+      geometryCellCache.set(boundaryGeometry, bySize);
+    }
+    bySize.set(sizeKey, computed);
+    return computed;
+  }
+
+  const sig = `${sizeKey}::${polygon.map((p) => `${p.lat.toFixed(4)},${p.lon.toFixed(4)}`).join(";")}`;
+  const cached = polygonCellCache.get(sig);
+  if (cached) {
+    polygonCellCache.delete(sig);
+    polygonCellCache.set(sig, cached);
+    return cached;
+  }
+
+  const computed = buildPolygonSampleCells(width, height, polygon);
+  if (polygonCellCache.size >= MAX_POLYGON_CELL_CACHE) {
+    const oldest = polygonCellCache.keys().next().value;
+    if (oldest !== undefined) polygonCellCache.delete(oldest);
+  }
+  polygonCellCache.set(sig, computed);
+  return computed;
 }
 
 /**
@@ -837,8 +1182,8 @@ export async function samplePolygonStats(
     };
   }
 
-  const raster = await loadRasterPixels(frame.imageUrl, 1280);
-  if (!raster) {
+  const grid = await getScalarGrid(frame.imageUrl, layer.cmap, false);
+  if (!grid) {
     return {
       variable: layerKey,
       unit: layer.unit,
@@ -856,84 +1201,41 @@ export async function samplePolygonStats(
     };
   }
 
+  const { cellKeys, cosWeights } = getPolygonSampleCells(
+    grid.width,
+    grid.height,
+    polygon,
+    boundaryGeometry
+  );
+
   const values: number[] = [];
   let weightedSum = 0;
   let weightTotal = 0;
-  let checkedCells = 0;
-  const visited = new Set<number>();
+  let checkedCells = cellKeys.length;
+  const span = layer.vmax - layer.vmin;
+  const norms = grid.norms;
 
-  const scanBounds = (
-    b: GeoBounds,
-    hitTest: (lat: number, lon: number) => boolean
-  ) => {
-    const xMin = Math.max(0, Math.floor(((b.west + 180) / 360) * raster.width));
-    const xMax = Math.min(raster.width - 1, Math.ceil(((b.east + 180) / 360) * raster.width));
-    const yMin = Math.max(0, Math.floor(((90 - b.north) / 180) * raster.height));
-    const yMax = Math.min(raster.height - 1, Math.ceil(((90 - b.south) / 180) * raster.height));
-
-    const spanX = Math.max(1, xMax - xMin);
-    const spanY = Math.max(1, yMax - yMin);
-    const stepX = Math.max(1, Math.floor(spanX / 36));
-    const stepY = Math.max(1, Math.floor(spanY / 36));
-
-    for (let py = yMin; py <= yMax; py += stepY) {
-      const lat = 90 - ((py + 0.5) / raster.height) * 180;
-      const cosW = Math.max(0.05, Math.cos((lat * Math.PI) / 180));
-      for (let px = xMin; px <= xMax; px += stepX) {
-        const cellKey = py * raster.width + px;
-        if (visited.has(cellKey)) continue;
-        const lon = ((px + 0.5) / raster.width) * 360 - 180;
-        if (!hitTest(lat, lon)) continue;
-        visited.add(cellKey);
-        checkedCells += 1;
-        const idx = cellKey * 4;
-        const t = decodeColormapNormalized(
-          raster.data[idx],
-          raster.data[idx + 1],
-          raster.data[idx + 2],
-          raster.data[idx + 3],
-          layer.cmap
-        );
-        if (t === null) continue;
-        const val = layer.vmin + t * (layer.vmax - layer.vmin);
-        values.push(val);
-        weightedSum += val * cosW;
-        weightTotal += cosW;
-      }
-    }
-  };
-
-  if (boundaryGeometry) {
-    const polys = getGeometryPolygons(boundaryGeometry);
-    for (const rings of polys) {
-      const outer = rings[0];
-      if (!outer || outer.length < 3) continue;
-      let west = Infinity;
-      let south = Infinity;
-      let east = -Infinity;
-      let north = -Infinity;
-      for (const c of outer) {
-        if (c[0] < west) west = c[0];
-        if (c[0] > east) east = c[0];
-        if (c[1] < south) south = c[1];
-        if (c[1] > north) north = c[1];
-      }
-      if (east - west > 175) continue;
-      scanBounds({ west, south, east, north }, (lat, lon) => pointInPolygonCoords(lat, lon, rings));
-    }
-  } else {
-    const bounds = computeBounds(polygon);
-    scanBounds(bounds, (lat, lon) => pointInPolygon(lat, lon, polygon));
+  for (let i = 0; i < cellKeys.length; i += 1) {
+    const t = norms[cellKeys[i]];
+    if (t < 0) continue;
+    const val = layer.vmin + t * span;
+    const cosW = cosWeights[i];
+    values.push(val);
+    weightedSum += val * cosW;
+    weightTotal += cosW;
   }
 
   // Fallback to interior point sample for micro-territories smaller than one raster cell
   if (values.length === 0) {
     const samplePt = findInteriorPoint(boundaryGeometry ?? polygon);
     if (samplePt) {
-      const [r, g, b, a] = sampleEquirectangularPixel(raster, samplePt.lat, samplePt.lon);
-      const t = decodeColormapNormalized(r, g, b, a, layer.cmap);
-      if (t !== null) {
-        const val = layer.vmin + t * (layer.vmax - layer.vmin);
+      const xNorm = ((((samplePt.lon + 180) % 360) + 360) % 360) / 360;
+      const yNorm = Math.max(0, Math.min(1, (90 - samplePt.lat) / 180));
+      const px = Math.min(grid.width - 1, Math.max(0, Math.floor(xNorm * grid.width)));
+      const py = Math.min(grid.height - 1, Math.max(0, Math.floor(yNorm * grid.height)));
+      const t = norms[py * grid.width + px];
+      if (t >= 0) {
+        const val = layer.vmin + t * span;
         values.push(val);
         weightedSum = val;
         weightTotal = 1;
@@ -985,24 +1287,189 @@ export async function samplePolygonStats(
 }
 
 /**
+ * Resolves the base URL for the backend API, prioritizing NEXT_PUBLIC_BACKEND_URL ->
+ * NEXT_PUBLIC_API_URL -> http://localhost:8000. Normalizes trailing slashes and redundant /api/v1 paths.
+ */
+export function getBackendBaseUrl(): string {
+  const sanitize = (val?: string): string | undefined => {
+    if (!val) return undefined;
+    const trimmed = val.trim();
+    if (!trimmed || trimmed === "undefined" || trimmed === "null") return undefined;
+    return trimmed;
+  };
+  const raw =
+    sanitize(process.env.NEXT_PUBLIC_BACKEND_URL) ||
+    sanitize(process.env.NEXT_PUBLIC_API_URL) ||
+    "http://localhost:8000";
+  return raw.replace(/\/+$/, "").replace(/\/api\/v1\/?$/i, "").replace(/\/+$/, "");
+}
+
+let backendUnavailableUntil = 0;
+
+export function resetBackendCircuitBreaker(): void {
+  backendUnavailableUntil = 0;
+}
+
+export function getBackendCircuitBreakerUntil(): number {
+  return backendUnavailableUntil;
+}
+
+export interface BackendRegionResponse {
+  summary?: {
+    mean?: number | null;
+    min?: number | null;
+    max?: number | null;
+    p90?: number | null;
+    displayMean?: number | null;
+    displayMin?: number | null;
+    displayMax?: number | null;
+    displayP90?: number | null;
+    validCount?: number;
+    totalCount?: number;
+  };
+  displayUnit?: string;
+  isMock?: boolean;
+  provenance?: { sourceName?: string };
+  series?: number[] | null;
+}
+
+/**
  * Computes the 8-timestamp diurnal mean time series for any drawn polygon and active variable.
+ * Queries backend /api/v1/jukebox/region with includeSeries: true when online, falling back
+ * seamlessly to offline raster colormap sampling if unreachable, timed out, or returning empty.
  */
 export async function samplePolygonSeries(
   layerKey: LayerKey,
   polygon: GeoPoint[],
-  boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon
+  boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon,
+  bounds?: GeoBounds
 ): Promise<number[]> {
   const layer = getLayerDefinition(layerKey);
   if (!layer.available || layerKey === "AOD") {
     return timeSlots.map(() => 0);
   }
-  const results = await Promise.all(
-    timeSlots.map((_, idx) => samplePolygonStats(layerKey, idx, polygon, boundaryGeometry))
-  );
-  return results.map((stat) => (stat.mean !== null ? stat.mean : layer.vmin));
+
+  const runOfflineFallback = async (): Promise<number[]> => {
+    const results = await Promise.all(
+      timeSlots.map((_, idx) => samplePolygonStats(layerKey, idx, polygon, boundaryGeometry))
+    );
+    return results.map((stat) => (stat.mean !== null ? stat.mean : layer.vmin));
+  };
+
+  const baseUrl = getBackendBaseUrl();
+  if (baseUrl && Date.now() >= backendUnavailableUntil) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const effectiveBounds =
+        bounds ??
+        (polygon.length > 0
+          ? computeBounds(polygon)
+          : boundaryGeometry
+            ? computePrimaryFocusBounds(boundaryGeometry).bounds
+            : computeBounds(polygon));
+
+      const latMin = Number(Math.min(effectiveBounds.south, effectiveBounds.north).toFixed(4));
+      const latMax = Number(Math.max(effectiveBounds.south, effectiveBounds.north).toFixed(4));
+      const lonMin = Number(Math.min(effectiveBounds.west, effectiveBounds.east).toFixed(4));
+      const lonMax = Number(Math.max(effectiveBounds.west, effectiveBounds.east).toFixed(4));
+
+      const controller = new AbortController();
+      timer = setTimeout(() => controller.abort(), 2500);
+      const serializedRings = serializePolygonRingsForApi(boundaryGeometry ?? polygon, 320);
+      const response = await fetch(`${baseUrl}/api/v1/jukebox/region`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          datasetId: "geos-cf-v2-aqc",
+          timestamp: timeSlots[0] ?? "2026-11-12T00:30:00Z",
+          variable: layerKey,
+          includeSeries: true,
+          bounds: {
+            latMin,
+            latMax,
+            lonMin,
+            lonMax,
+          },
+          ...(serializedRings && serializedRings.length > 0 ? { polygons: serializedRings } : {}),
+          normalizationMethod: "log_scale",
+        }),
+      });
+
+      if (response.ok) {
+        const payload = (await response.json()) as BackendRegionResponse;
+        if (
+          Array.isArray(payload.series) &&
+          (payload.series.length === timeSlots.length || payload.series.length > 0) &&
+          payload.series.every((val) => typeof val === "number" && !Number.isNaN(val))
+        ) {
+          return payload.series;
+        }
+      } else {
+        backendUnavailableUntil = Date.now() + 30000;
+      }
+    } catch {
+      backendUnavailableUntil = Date.now() + 30000;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  return runOfflineFallback();
 }
 
-let backendUnavailableUntil = 0;
+const pointSeriesCache = new Map<string, number[]>();
+
+/**
+ * Lazily samples an 8-slot diurnal GEOS-CF curve at a geographic coordinate,
+ * yielding between frames to keep UI interactions responsive.
+ */
+export async function samplePointSeries(
+  layerKey: LayerKey,
+  lat: number,
+  lon: number,
+  fallbackValue?: number
+): Promise<number[]> {
+  const layer = getLayerDefinition(layerKey);
+  if (!layer.available || layerKey === "AOD") return [];
+  const cacheKey = `${layerKey}:${lat.toFixed(2)}:${lon.toFixed(2)}`;
+  const cached = pointSeriesCache.get(cacheKey);
+  if (cached) return cached;
+
+  const span = layer.vmax - layer.vmin;
+  const fallback = fallbackValue ?? layer.vmin;
+  const values: number[] = [];
+  let validCount = 0;
+
+  for (let idx = 0; idx < timeSlots.length; idx += 1) {
+    if (idx > 0) await yieldToMain();
+    const frame = frameFor(layerKey, idx);
+    if (!frame) {
+      values.push(fallback);
+      continue;
+    }
+    const grid = await getScalarGrid(frame.imageUrl, layer.cmap, false);
+    if (!grid) {
+      values.push(fallback);
+      continue;
+    }
+    const t = sampleScalarSmooth(grid, lat, lon);
+    if (t < 0) {
+      values.push(fallback);
+      continue;
+    }
+    validCount += 1;
+    values.push(Number((layer.vmin + t * span).toFixed(1)));
+  }
+
+  if (validCount === 0) return [];
+  if (pointSeriesCache.size >= 24) {
+    const oldest = pointSeriesCache.keys().next().value;
+    if (oldest !== undefined) pointSeriesCache.delete(oldest);
+  }
+  pointSeriesCache.set(cacheKey, values);
+  return values;
+}
 
 /**
  * Queries FastAPI /api/v1/jukebox/region when configured & healthy, otherwise falls back cleanly
@@ -1020,7 +1487,7 @@ export async function fetchBackendRegionStats(
     return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
   }
 
-  const baseUrl = process.env.NEXT_PUBLIC_BACKEND_URL?.trim();
+  const baseUrl = getBackendBaseUrl();
   const safeIndex = Math.max(0, Math.min(timeSlots.length - 1, timeIndex));
   const timestamp = timeSlots[safeIndex] ?? "2026-11-12T00:30:00Z";
 
@@ -1028,11 +1495,25 @@ export async function fetchBackendRegionStats(
     return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
   }
 
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
+    const effectiveBounds =
+      bounds ??
+      (polygon.length > 0
+        ? computeBounds(polygon)
+        : boundaryGeometry
+          ? computePrimaryFocusBounds(boundaryGeometry).bounds
+          : computeBounds(polygon));
+
+    const latMin = Number(Math.min(effectiveBounds.south, effectiveBounds.north).toFixed(4));
+    const latMax = Number(Math.max(effectiveBounds.south, effectiveBounds.north).toFixed(4));
+    const lonMin = Number(Math.min(effectiveBounds.west, effectiveBounds.east).toFixed(4));
+    const lonMax = Number(Math.max(effectiveBounds.west, effectiveBounds.east).toFixed(4));
+
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2200);
+    timer = setTimeout(() => controller.abort(), 2200);
     const serializedRings = serializePolygonRingsForApi(boundaryGeometry ?? polygon, 320);
-    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/api/v1/jukebox/region`, {
+    const response = await fetch(`${baseUrl}/api/v1/jukebox/region`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: controller.signal,
@@ -1041,39 +1522,34 @@ export async function fetchBackendRegionStats(
         timestamp,
         variable: layerKey,
         bounds: {
-          latMin: Number(bounds.south.toFixed(4)),
-          latMax: Number(bounds.north.toFixed(4)),
-          lonMin: Number(bounds.west.toFixed(4)),
-          lonMax: Number(bounds.east.toFixed(4)),
+          latMin,
+          latMax,
+          lonMin,
+          lonMax,
         },
         ...(serializedRings && serializedRings.length > 0 ? { polygons: serializedRings } : {}),
         normalizationMethod: "log_scale",
       }),
     });
-    clearTimeout(timer);
 
     if (!response.ok) {
       backendUnavailableUntil = Date.now() + 30000;
       return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
     }
 
-    const payload = (await response.json()) as {
-      summary?: {
-        displayMean?: number | null;
-        displayP90?: number | null;
-        displayMax?: number | null;
-        validCount?: number;
-        totalCount?: number;
-      };
-      displayUnit?: string;
-      isMock?: boolean;
-      provenance?: { sourceName?: string };
-    };
-
+    const payload = (await response.json()) as BackendRegionResponse;
     const summary = payload.summary;
-    if (!summary || summary.displayMean == null) {
+    const rawMean = summary?.displayMean ?? summary?.mean;
+    if (!summary || rawMean == null || Number.isNaN(rawMean)) {
       return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
     }
+
+    const rawMin = summary.displayMin ?? summary.min;
+    const min = rawMin != null && !Number.isNaN(rawMin) ? Number(rawMin.toFixed(1)) : null;
+    const rawMax = summary.displayMax ?? summary.max;
+    const max = rawMax != null && !Number.isNaN(rawMax) ? Number(rawMax.toFixed(1)) : null;
+    const rawP90 = summary.displayP90 ?? summary.p90;
+    const p90 = rawP90 != null && !Number.isNaN(rawP90) ? Number(rawP90.toFixed(1)) : null;
 
     const coveragePct =
       summary.totalCount && summary.totalCount > 0 && summary.validCount != null
@@ -1083,10 +1559,10 @@ export async function fetchBackendRegionStats(
     return {
       variable: layerKey,
       unit: payload.displayUnit ?? layer.unit,
-      mean: Number(summary.displayMean.toFixed(1)),
-      min: null,
-      max: summary.displayMax != null ? Number(summary.displayMax.toFixed(1)) : null,
-      p90: summary.displayP90 != null ? Number(summary.displayP90.toFixed(1)) : null,
+      mean: Number(rawMean.toFixed(1)),
+      min,
+      max,
+      p90,
       sampleCount: summary.validCount ?? 0,
       coveragePct,
       timestamp,
@@ -1098,6 +1574,8 @@ export async function fetchBackendRegionStats(
   } catch {
     backendUnavailableUntil = Date.now() + 30000;
     return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -1110,29 +1588,168 @@ export interface SnapshotOptions {
   variable: LayerKey;
   timeIndex: number;
   seriesPreview?: number[];
+  signal?: AbortSignal;
 }
 
-/**
- * Renders a genuine map-derived thumbnail into a 2D canvas:
- * NASA Blue Marble + regional crop + GEOS-CF pollutant field + geographic polygon outline + sonic signature.
- */
-export async function renderMapSnapshotToCanvas(
-  canvas: HTMLCanvasElement,
+const MAX_SNAPSHOT_CACHE = 18;
+const snapshotCanvasCache = new Map<string, HTMLCanvasElement>();
+const inFlightSnapshots = new Map<string, Promise<HTMLCanvasElement | null>>();
+const ringBboxCache = new WeakMap<object, GeoBounds>();
+const objectIdCache = new WeakMap<object, number>();
+let nextStableObjId = 1;
+
+function getStableObjectId(obj: object): number {
+  let id = objectIdCache.get(obj);
+  if (id === undefined) {
+    id = nextStableObjId++;
+    objectIdCache.set(obj, id);
+  }
+  return id;
+}
+
+function yieldToMain(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function getRingBbox(ring: number[][]): GeoBounds {
+  const cached = ringBboxCache.get(ring);
+  if (cached) return cached;
+  let west = 180;
+  let east = -180;
+  let south = 90;
+  let north = -90;
+  for (let i = 0; i < ring.length; i += 1) {
+    const lon = ring[i][0];
+    const lat = ring[i][1];
+    if (lon < west) west = lon;
+    if (lon > east) east = lon;
+    if (lat < south) south = lat;
+    if (lat > north) north = lat;
+  }
+  const bbox: GeoBounds = { west, south, east, north };
+  ringBboxCache.set(ring, bbox);
+  return bbox;
+}
+
+function buildSnapshotCacheKey(
+  width: number,
+  height: number,
+  resolvedLayerKey: LayerKey,
   options: SnapshotOptions
-): Promise<void> {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
+): string {
+  const geomPart = options.boundaryGeometry
+    ? `g${getStableObjectId(options.boundaryGeometry)}`
+    : options.polygon.length > 0
+      ? `p${getStableObjectId(options.polygon)}-${options.polygon.length}`
+      : "p0";
+  const seriesPart =
+    options.seriesPreview && options.seriesPreview.length > 0
+      ? options.seriesPreview.map((v) => v.toFixed(1)).join(",")
+      : "";
+  return [
+    `${width}x${height}`,
+    resolvedLayerKey,
+    options.timeIndex,
+    options.center.lat.toFixed(3),
+    options.center.lon.toFixed(3),
+    options.zoom.toFixed(2),
+    options.territoryCode ?? "",
+    geomPart,
+    seriesPart,
+  ].join("|");
+}
 
-  const width = canvas.width;
-  const height = canvas.height;
+function getCachedSnapshot(key: string): HTMLCanvasElement | undefined {
+  const existing = snapshotCanvasCache.get(key);
+  if (!existing) return undefined;
+  snapshotCanvasCache.delete(key);
+  snapshotCanvasCache.set(key, existing);
+  return existing;
+}
+
+function setCachedSnapshot(key: string, canvas: HTMLCanvasElement): void {
+  if (snapshotCanvasCache.has(key)) {
+    snapshotCanvasCache.delete(key);
+  } else if (snapshotCanvasCache.size >= MAX_SNAPSHOT_CACHE) {
+    const oldest = snapshotCanvasCache.keys().next().value;
+    if (oldest !== undefined) snapshotCanvasCache.delete(oldest);
+  }
+  snapshotCanvasCache.set(key, canvas);
+}
+
+const SNAPSHOT_LON_SHIFTS = [0, -360, 360] as const;
+
+function strokeVisibleRingShifts(
+  ctx: CanvasRenderingContext2D,
+  ring: number[][],
+  west: number,
+  south: number,
+  east: number,
+  north: number,
+  projX: (lon: number) => number,
+  projY: (lat: number) => number,
+  maxVertices: number
+): void {
+  if (ring.length < 3) return;
+  const rb = getRingBbox(ring);
+  if (rb.north < south || rb.south > north) return;
+  const stride = ring.length > maxVertices ? Math.ceil(ring.length / maxVertices) : 1;
+
+  for (let s = 0; s < SNAPSHOT_LON_SHIFTS.length; s += 1) {
+    const shift = SNAPSHOT_LON_SHIFTS[s];
+    if (rb.east + shift < west || rb.west + shift > east) continue;
+    ctx.beginPath();
+    let started = false;
+    for (let i = 0; i < ring.length; i += stride) {
+      const px = projX(ring[i][0] + shift);
+      const py = projY(ring[i][1]);
+      if (!started) {
+        ctx.moveTo(px, py);
+        started = true;
+      } else {
+        ctx.lineTo(px, py);
+      }
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+}
+
+async function computeSnapshotCanvas(
+  width: number,
+  height: number,
+  options: SnapshotOptions
+): Promise<HTMLCanvasElement | null> {
+  if (typeof document === "undefined") return null;
   const layer = getLayerDefinition(options.variable);
-  const frame = frameFor(layer.available ? options.variable : "PM25_RH35", options.timeIndex);
+  const effectiveKey: LayerKey = layer.available ? options.variable : "PM25_RH35";
+  const effectiveLayer = getLayerDefinition(effectiveKey);
+  const frame = frameFor(effectiveKey, options.timeIndex);
 
-  const [baseRaster, overlayRaster, boundaries] = await Promise.all([
-    loadRasterPixels("/images/earth-blue-marble.png", 1200),
-    frame ? loadRasterPixels(frame.imageUrl, 960) : Promise.resolve(null),
-    import("./worldBoundaries").then((m) => m.loadWorldBoundaries()).catch(() => null),
+  const [wbMod, scalarGrid] = await Promise.all([
+    import("./worldBoundaries").catch(() => null),
+    frame && effectiveLayer.available
+      ? getScalarGrid(frame.imageUrl, effectiveLayer.cmap, false)
+      : Promise.resolve(null),
   ]);
+
+  const boundaries = wbMod
+    ? (wbMod.getCachedWorldBoundaries() ?? (await wbMod.loadWorldBoundariesQuick()))
+    : null;
+
+  const baseRaster = !boundaries
+    ? await loadRasterPixels("/images/earth-blue-marble.png", 1200)
+    : null;
+
+  // Yield cleanly before canvas pixel/vector composition to avoid >50ms UI stalls when multiple cards mount
+  await yieldToMain();
+
+  const outCanvas = document.createElement("canvas");
+  outCanvas.width = width;
+  outCanvas.height = height;
+  const ctx = outCanvas.getContext("2d");
+  if (!ctx) return null;
 
   const spanLon = Math.min(115, Math.max(5.5, 165 / Math.pow(1.62, Math.max(1, options.zoom - 1.5))));
   const spanLat = spanLon * (height / width) * Math.max(0.5, Math.cos((options.center.lat * Math.PI) / 180));
@@ -1140,39 +1757,45 @@ export async function renderMapSnapshotToCanvas(
   const east = options.center.lon + spanLon / 2;
   const north = Math.min(84, options.center.lat + spanLat / 2);
   const south = Math.max(-84, options.center.lat - spanLat / 2);
+  const lonSpan = Math.max(1e-6, east - west);
+  const latSpan = Math.max(1e-6, north - south);
 
-  if (baseRaster) {
+  if ((scalarGrid && effectiveLayer.available) || baseRaster) {
     const imgData = ctx.createImageData(width, height);
     const out = imgData.data;
+    const lons = new Float64Array(width);
+    for (let px = 0; px < width; px += 1) {
+      lons[px] = west + (px / Math.max(1, width - 1)) * lonSpan;
+    }
+    const pxScratch = new Uint8ClampedArray(4);
+
     for (let py = 0; py < height; py += 1) {
-      const lat = north - (py / (height - 1)) * (north - south);
+      const lat = north - (py / Math.max(1, height - 1)) * latSpan;
+      const rowOffset = py * width * 4;
       for (let px = 0; px < width; px += 1) {
-        const lon = west + (px / (width - 1)) * (east - west);
-        // Deep cartographic substrate so borders + NASA GEOS-CF plumes stay crisp at any zoom
+        const lon = lons[px];
         let r = 20;
         let g = 46;
         let b = 44;
 
-        if (!boundaries) {
+        if (!boundaries && baseRaster) {
           const [br, bg, bb] = sampleEquirectangularPixel(baseRaster, lat, lon);
           r = Math.round(br * 0.45 + 12);
           g = Math.round(bg * 0.55 + 22);
           b = Math.round(bb * 0.52 + 20);
         }
 
-        if (overlayRaster && layer.available) {
-          const [or, og, ob, oa] = sampleEquirectangularPixel(overlayRaster, lat, lon);
-          const t = decodeColormapNormalized(or, og, ob, oa, layer.cmap);
-          if (t !== null) {
-            const [er, eg, eb, eAlpha] = intensityToEditorialRgba(t);
-            const alpha = (eAlpha / 255) * 0.8;
-            r = Math.round(r * (1 - alpha) + er * alpha);
-            g = Math.round(g * (1 - alpha) + eg * alpha);
-            b = Math.round(b * (1 - alpha) + eb * alpha);
+        if (scalarGrid && effectiveLayer.available) {
+          const t = sampleScalarSmooth(scalarGrid, lat, lon);
+          if (t >= 0.18 && writeEditorialRgba(t, pxScratch, 0)) {
+            const alpha = (pxScratch[3] / 255) * 0.8;
+            r = Math.round(r * (1 - alpha) + pxScratch[0] * alpha);
+            g = Math.round(g * (1 - alpha) + pxScratch[1] * alpha);
+            b = Math.round(b * (1 - alpha) + pxScratch[2] * alpha);
           }
         }
 
-        const dst = (py * width + px) * 4;
+        const dst = rowOffset + px * 4;
         out[dst] = r;
         out[dst + 1] = g;
         out[dst + 2] = b;
@@ -1181,41 +1804,29 @@ export async function renderMapSnapshotToCanvas(
     }
     ctx.putImageData(imgData, 0, 0);
   } else {
-    ctx.fillStyle = "#16312f";
+    ctx.fillStyle = boundaries ? "#142e2c" : "#16312f";
     ctx.fillRect(0, 0, width, height);
   }
 
-  // Crisp vector land polygons + international border lines in thumbnail viewport
-  if (boundaries) {
-    const projX = (lon: number) => ((lon - west) / (east - west)) * width;
-    const projY = (lat: number) => ((north - lat) / (north - south)) * height;
+  const projX = (lon: number) => ((lon - west) / lonSpan) * width;
+  const projY = (lat: number) => ((north - lat) / latSpan) * height;
 
+  // Viewport-culled vector land polygons + international border lines
+  if (boundaries) {
     ctx.save();
     ctx.fillStyle = "rgba(224, 238, 228, 0.08)";
     ctx.strokeStyle = "rgba(224, 238, 228, 0.34)";
     ctx.lineWidth = 0.85;
 
-    const strokeRing = (ring: number[][]) => {
-      if (ring.length < 2) return;
-      ctx.beginPath();
-      ring.forEach(([lon, lat], idx) => {
-        const px = projX(lon);
-        const py = projY(lat);
-        if (idx === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
-      });
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-    };
-
     for (const feat of boundaries.countries.features) {
       const geom = feat.geometry;
       if (geom.type === "Polygon" && geom.coordinates[0]) {
-        strokeRing(geom.coordinates[0]);
+        strokeVisibleRingShifts(ctx, geom.coordinates[0], west, south, east, north, projX, projY, 220);
       } else if (geom.type === "MultiPolygon") {
         for (const poly of geom.coordinates) {
-          if (poly[0]) strokeRing(poly[0]);
+          if (poly[0]) {
+            strokeVisibleRingShifts(ctx, poly[0], west, south, east, north, projX, projY, 220);
+          }
         }
       }
     }
@@ -1240,9 +1851,8 @@ export async function renderMapSnapshotToCanvas(
 
   // Highlighted geographic boundary (full MultiPolygon territory border when available, or drawn ring)
   let resolvedGeom = options.boundaryGeometry;
-  if (!resolvedGeom && options.territoryCode && boundaries) {
-    const wbMod = await import("./worldBoundaries").catch(() => null);
-    const feat = wbMod?.findTerritoryFeature(boundaries, options.territoryCode);
+  if (!resolvedGeom && options.territoryCode && boundaries && wbMod) {
+    const feat = wbMod.findTerritoryFeature(boundaries, options.territoryCode);
     if (feat && (feat.geometry.type === "Polygon" || feat.geometry.type === "MultiPolygon")) {
       resolvedGeom = feat.geometry;
     }
@@ -1255,12 +1865,24 @@ export async function renderMapSnapshotToCanvas(
     for (const rings of polys) {
       for (const ring of rings) {
         if (ring.length < 3) continue;
-        ring.forEach(([lon, lat], idx) => {
-          const px = ((lon - west) / (east - west)) * width;
-          const py = ((north - lat) / (north - south)) * height;
-          if (idx === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
-        });
+        const rb = getRingBbox(ring);
+        if (rb.north < south || rb.south > north) continue;
+        const shift = SNAPSHOT_LON_SHIFTS.find(
+          (s) => rb.east + s >= west && rb.west + s <= east
+        );
+        if (shift === undefined) continue;
+        const stride = ring.length > 360 ? Math.ceil(ring.length / 360) : 1;
+        let started = false;
+        for (let i = 0; i < ring.length; i += stride) {
+          const px = projX(ring[i][0] + shift);
+          const py = projY(ring[i][1]);
+          if (!started) {
+            ctx.moveTo(px, py);
+            started = true;
+          } else {
+            ctx.lineTo(px, py);
+          }
+        }
         ctx.closePath();
       }
     }
@@ -1274,8 +1896,8 @@ export async function renderMapSnapshotToCanvas(
     ctx.save();
     ctx.beginPath();
     options.polygon.forEach((pt, idx) => {
-      const px = ((pt.lon - west) / (east - west)) * width;
-      const py = ((north - pt.lat) / (north - south)) * height;
+      const px = projX(pt.lon);
+      const py = projY(pt.lat);
       if (idx === 0) ctx.moveTo(px, py);
       else ctx.lineTo(px, py);
     });
@@ -1315,4 +1937,54 @@ export async function renderMapSnapshotToCanvas(
     ctx.stroke();
     ctx.restore();
   }
+
+  return outCanvas;
+}
+
+/**
+ * Renders a genuine map-derived thumbnail into a 2D canvas:
+ * NASA GEOS-CF scalar grid + viewport-culled Quick/cached vector boundaries + geographic outline + sonic signature.
+ */
+export async function renderMapSnapshotToCanvas(
+  canvas: HTMLCanvasElement,
+  options: SnapshotOptions
+): Promise<void> {
+  if (options.signal?.aborted) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const width = canvas.width;
+  const height = canvas.height;
+  const layer = getLayerDefinition(options.variable);
+  const resolvedLayerKey: LayerKey = layer.available ? options.variable : "PM25_RH35";
+  const cacheKey = buildSnapshotCacheKey(width, height, resolvedLayerKey, options);
+
+  const cached = getCachedSnapshot(cacheKey);
+  if (cached) {
+    ctx.drawImage(cached, 0, 0);
+    return;
+  }
+
+  // Paint instant dark substrate while async assets decode so the frame never flashes blank
+  ctx.fillStyle = "#142e2c";
+  ctx.fillRect(0, 0, width, height);
+
+  let job = inFlightSnapshots.get(cacheKey);
+  if (!job) {
+    job = computeSnapshotCanvas(width, height, options)
+      .then((rendered) => {
+        if (rendered) {
+          setCachedSnapshot(cacheKey, rendered);
+        }
+        return rendered;
+      })
+      .finally(() => {
+        inFlightSnapshots.delete(cacheKey);
+      });
+    inFlightSnapshots.set(cacheKey, job);
+  }
+
+  const rendered = await job;
+  if (options.signal?.aborted || !rendered) return;
+  ctx.drawImage(rendered, 0, 0);
 }
