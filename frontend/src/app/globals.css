@@ -15,7 +15,7 @@ img { max-width:100%; }
 :focus-visible { outline:3px solid #3a8b7c; outline-offset:3px; }
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { animation-duration:.01ms!important; transition-duration:.01ms!important; scroll-behavior:auto!important; } }
 
-.b-page { min-height:100vh; overflow:hidden; }
+.b-page { min-height:100vh; overflow-x:clip; }
 .b-container { width:min(100% - 64px,1536px); margin-inline:auto; }
 .b-header { height:78px; padding:0 max(32px,calc((100vw - 1536px)/2)); display:flex; align-items:center; justify-content:space-between; gap:24px; background:rgba(255,254,250,.98); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:50; }
 .b-brand { min-width:270px; display:flex; align-items:center; gap:13px; white-space:nowrap; }

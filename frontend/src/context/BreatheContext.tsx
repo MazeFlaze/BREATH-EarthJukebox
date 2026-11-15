@@ -15,6 +15,8 @@ import {
   formatUtc,
   galleryWorks,
   getLayerDefinition,
+  getRegionLayerRestriction,
+  type LayerRegionRestriction,
   makeSelection,
   presetSelections,
   timeSlots,
@@ -130,6 +132,7 @@ interface BreatheContextValue {
   canUndoPolygon: boolean;
   canRedoPolygon: boolean;
   setActiveLayer: (layer: LayerKey) => void;
+  getLayerRestriction: (layer: LayerKey) => LayerRegionRestriction | null;
   setBasemapMode: (mode: BasemapMode) => void;
   setLayerVisible: (visible: boolean) => void;
   setLayerOpacity: (opacity: number) => void;
@@ -172,7 +175,30 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
   const [historyIndex, setHistoryIndex] = useState(0);
   const selection = selectionHistory[historyIndex] ?? DEFAULT_SELECTION;
 
-  const [activeLayer, setActiveLayer] = useState<LayerKey>("PM25_RH35");
+  const [activeLayerState, setActiveLayerState] = useState<LayerKey>("PM25_RH35");
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+
+  const activeLayerRestriction = getRegionLayerRestriction(selection, activeLayerState);
+  const activeLayer = activeLayerRestriction
+    ? activeLayerRestriction.fallbackLayer
+    : activeLayerState;
+
+  const setActiveLayer = useCallback((nextLayer: LayerKey) => {
+    const restriction = getRegionLayerRestriction(selectionRef.current, nextLayer);
+    setActiveLayerState(restriction ? restriction.fallbackLayer : nextLayer);
+  }, []);
+
+  const getLayerRestriction = useCallback(
+    (layer: LayerKey) => getRegionLayerRestriction(selection, layer),
+    [selection]
+  );
+
+  useEffect(() => {
+    if (activeLayerRestriction) {
+      setActiveLayerState(activeLayerRestriction.fallbackLayer);
+    }
+  }, [activeLayerRestriction]);
   const [basemapMode, setBasemapMode] = useState<BasemapMode>("territories");
   const [layerVisible, setLayerVisible] = useState(true);
   const [layerOpacity, setLayerOpacity] = useState(0.76);
@@ -283,7 +309,21 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
       const rawSaved = window.localStorage.getItem(STORAGE_KEYS.savedWorks);
       if (rawSaved) {
         const parsed = JSON.parse(rawSaved) as GalleryWork[];
-        if (Array.isArray(parsed)) setSavedWorks(parsed);
+        if (Array.isArray(parsed)) {
+          setSavedWorks(
+            parsed.filter(
+              (work) =>
+                !getRegionLayerRestriction(
+                  {
+                    id: work.regionId,
+                    name: work.region,
+                    territoryCode: work.territoryCode,
+                  },
+                  work.variable
+                )
+            )
+          );
+        }
       }
       const rawBookmarks = window.localStorage.getItem(STORAGE_KEYS.bookmarks);
       if (rawBookmarks) {
@@ -353,7 +393,7 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
     if (keyParam) {
       setMapping((prev) => ({ ...prev, musicalKey: keyParam }));
     }
-  }, []);
+  }, [setActiveLayer]);
 
   // Persist current region to sessionStorage without huge GeoJSON geometry blobs (rehydrated by territoryCode)
   useEffect(() => {
@@ -667,7 +707,7 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
         setRegionSeries(work.seriesPreview);
       }
     },
-    [pushSelection]
+    [pushSelection, setActiveLayer]
   );
 
   const saveWorkToGallery = useCallback(
@@ -786,7 +826,7 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
           typeof m[3] === "number" ? Math.max(0, Math.min(1, m[3] / 100)) : prev.spatialSpread,
       }));
     },
-    [pushSelection]
+    [pushSelection, setActiveLayer]
   );
 
   const value = useMemo<BreatheContextValue>(
@@ -809,6 +849,7 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
       canUndoPolygon: historyIndex > 0,
       canRedoPolygon: historyIndex < selectionHistory.length - 1,
       setActiveLayer,
+      getLayerRestriction,
       setBasemapMode,
       setLayerVisible,
       setLayerOpacity,
@@ -851,6 +892,8 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
       bookmarkedIds,
       historyIndex,
       selectionHistory.length,
+      setActiveLayer,
+      getLayerRestriction,
       setCamera,
       flyTo,
       updateMapping,
