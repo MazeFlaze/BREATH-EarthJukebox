@@ -61,7 +61,7 @@ Script sẽ tự động:
 
 ## 3. Cách 2: Tự Động Hóa Bằng CI/CD GitHub Actions (Chuẩn AlgoViz)
 
-Repository sử dụng workflow hợp nhất tại [`.github/workflows/breathe-ci-cd.yml`](file:///.github/workflows/breathe-ci-cd.yml):
+Repository sử dụng workflow hợp nhất tại [`.github/workflows/breathe-ci-cd.yml`](../.github/workflows/breathe-ci-cd.yml):
 
 ```mermaid
 flowchart TD
@@ -119,10 +119,10 @@ docker compose up --build
 
 ## 5. Danh Mục Các File Đã Tạo / Cập Nhật
 
-1. [`frontend/Dockerfile`](file:///home/hien/Project/Nasa/BREATHE-EarthJukebox/frontend/Dockerfile): Multi-stage build Node.js 20 Alpine với Next.js Standalone và user bảo mật `nextjs:nodejs` (UID 1001).
-2. [`frontend/.dockerignore`](file:///home/hien/Project/Nasa/BREATHE-EarthJukebox/frontend/.dockerignore): Bỏ qua `node_modules`, `.next`, cache.
-3. [`backend/Dockerfile`](file:///home/hien/Project/Nasa/BREATHE-EarthJukebox/backend/Dockerfile): Python 3.12-slim kèm thư viện C `libnetcdf-dev`, `libhdf5-dev`, healthcheck và user `appuser` (UID 1001).
-4. [`backend/.dockerignore`](file:///home/hien/Project/Nasa/BREATHE-EarthJukebox/backend/.dockerignore): Bỏ qua `.venv`, bytecode, cache.
-5. [`docker-compose.yml`](file:///home/hien/Project/Nasa/BREATHE-EarthJukebox/docker-compose.yml): Cấu hình orchestration local chuẩn production liên kết Frontend, Backend và Neon Database.
-6. [`scripts/deploy-azure.sh`](file:///home/hien/Project/Nasa/BREATHE-EarthJukebox/scripts/deploy-azure.sh): Script triển khai Azure Container Apps một chạm với cơ chế Scale-to-Zero.
-7. [`.github/workflows/deploy-azure.yml`](file:///home/hien/Project/Nasa/BREATHE-EarthJukebox/.github/workflows/deploy-azure.yml): Workflow CI/CD build và deploy tự động lên Azure.
+1. [`frontend/Dockerfile`](../frontend/Dockerfile): Multi-stage build Node.js 20 Alpine với Next.js Standalone và user bảo mật `nextjs:nodejs` (UID 1001).
+2. [`frontend/.dockerignore`](../frontend/.dockerignore): Bỏ qua `node_modules`, `.next`, cache.
+3. [`backend/Dockerfile`](../backend/Dockerfile): Python 3.12-slim kèm thư viện C `libnetcdf-dev`, `libhdf5-dev`, healthcheck và user `appuser` (UID 1001).
+4. [`backend/.dockerignore`](../backend/.dockerignore): Bỏ qua `.venv`, bytecode, cache.
+5. [`docker-compose.yml`](../docker-compose.yml): Cấu hình orchestration local chuẩn production liên kết Frontend, Backend và Neon Database.
+6. [`scripts/deploy-azure.sh`](../scripts/deploy-azure.sh): Script triển khai Azure Container Apps một chạm với cơ chế Scale-to-Zero.
+7. [`.github/workflows/breathe-ci-cd.yml`](../.github/workflows/breathe-ci-cd.yml): Workflow CI/CD build và deploy tự động lên Azure.
