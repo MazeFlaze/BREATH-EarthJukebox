@@ -404,5 +404,41 @@ describe("Frontend Region API Contract & Raster Decode Tests", () => {
       assert.ok(!content.includes("loadRasterPixels(imageUrl, 1280)"), "raster-tile-worker.js must not use 1280");
       assert.ok(content.includes("loadRasterPixels(imageUrl, 2048)"), "raster-tile-worker.js must use 2048");
     });
+
+    it("smoothDisplayNorms dissolves sharp block edges into continuous gradients while preserving masks", () => {
+      const { smoothDisplayNorms } = require("../src/lib/geosCfRaster");
+      const width = 8;
+      const height = 8;
+      const norms = new Float32Array(width * height);
+      // Half zeros, half 1.0 (sharp step edge), and negative mask in corner
+      for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          const idx = y * width + x;
+          if (x === 0 && y === 0) {
+            norms[idx] = -1; // masked
+          } else if (x < 4) {
+            norms[idx] = 0.0;
+          } else {
+            norms[idx] = 1.0;
+          }
+        }
+      }
+
+      const smoothed = smoothDisplayNorms(norms, width, height);
+      // Verify mask preserved
+      assert.equal(smoothed[0], -1);
+
+      // Verify step transition at column 3 and 4 is smoothed between 0.0 and 1.0
+      const midValLeft = smoothed[4 * width + 3];
+      const midValRight = smoothed[4 * width + 4];
+      assert.ok(midValLeft > 0.0 && midValLeft < 0.6, `Expected smoothed transition, got ${midValLeft}`);
+      assert.ok(midValRight > 0.4 && midValRight < 1.0, `Expected smoothed transition, got ${midValRight}`);
+    });
+
+    it("verifies worker script instantiation includes cache buster version query", () => {
+      const geosPath = path.resolve(__dirname, "../src/lib/geosCfRaster.ts");
+      const content = fs.readFileSync(geosPath, "utf-8");
+      assert.ok(content.includes("/workers/raster-tile-worker.js?v="), "Worker must include version query parameter");
+    });
   });
 });
