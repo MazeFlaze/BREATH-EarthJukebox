@@ -6,6 +6,14 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _default_catalog_root(config_file: Path | None = None) -> Path:
+    """Resolve the default verified catalog path across repo and container layouts."""
+    target = (config_file or Path(__file__)).resolve()
+    if len(target.parents) > 3 and (target.parents[3] / "frontend").is_dir():
+        return target.parents[3] / "frontend/public/data/geos-cf-catalog"
+    return target.parents[2] / "data/geos-cf-catalog"
+
+
 class Settings(BaseSettings):
     """
     Application Settings configured via environment variables and .env file.
@@ -27,7 +35,7 @@ class Settings(BaseSettings):
     DATA_STORAGE_ROOT: Path = Path(__file__).resolve().parent.parent / "data" / "raw"
     NASA_ARCHIVE_ROOT: Path = Path(__file__).resolve().parent.parent / "data" / "nasa-archive"
     # Read-only verified artifacts from the existing manual exporter. Mount this directory in production.
-    GEOS_CF_CATALOG_ROOT: Path = Path(__file__).resolve().parents[3] / "frontend/public/data/geos-cf-catalog"
+    GEOS_CF_CATALOG_ROOT: Path = _default_catalog_root()
 
     # NASA GEOS-CF Product Configuration
     NASA_PROVIDER: str = "NASA GMAO"
