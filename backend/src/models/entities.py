@@ -59,6 +59,11 @@ class DatasetAsset(Base):
     dataset_source = relationship("DatasetSource", back_populates="assets")
     samples = relationship("ObservationSample", back_populates="dataset_asset", cascade="all, delete-orphan")
 
+    def resolve_path(self):
+        from pathlib import Path
+        from ..utils.storage import resolve_asset_path
+        return resolve_asset_path(self.storage_path, self.original_filename)
+
 
 class Location(Base):
     """
