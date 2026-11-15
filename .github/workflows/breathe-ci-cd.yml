@@ -57,6 +57,39 @@ jobs:
         run: |
           pytest -v tests/
 
+  frontend-ci:
+    name: Frontend Checks (Lint, Typecheck, Tests & Build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Run Lint & Typecheck
+        run: |
+          npm run lint
+          npm run typecheck
+
+      - name: Run Frontend Unit Tests
+        run: npm test
+
+      - name: Build Production Next.js Bundle
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run build
+
   deploy-backend:
     name: CD - Deploy Backend to Azure Container Apps (Scale-to-Zero)
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
@@ -117,6 +150,7 @@ jobs:
           ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+          CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           echo "=========================================================="
@@ -127,6 +161,17 @@ jobs:
           echo "=========================================================="
 
           az extension add --name containerapp --upgrade --yes
+
+          # Resolve effective CORS_ORIGINS (custom vars override OR auto-discover existing frontend FQDN)
+          EFFECTIVE_CORS="${CORS_ORIGINS}"
+          if [ -z "$EFFECTIVE_CORS" ]; then
+            EXISTING_FE_FQDN=$(az containerapp show --name breathe-frontend --resource-group "${RESOURCE_GROUP}" --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null || echo "")
+            if [ -n "$EXISTING_FE_FQDN" ]; then
+              EFFECTIVE_CORS="https://${EXISTING_FE_FQDN},http://localhost:3000,http://127.0.0.1:3000"
+            else
+              EFFECTIVE_CORS="http://localhost:3000,http://127.0.0.1:3000"
+            fi
+          fi
 
           # Determine location from ACR or Resource Group (ensuring allowed region such as eastasia)
           LOCATION="${{ vars.AZURE_LOCATION }}"
@@ -170,6 +215,7 @@ jobs:
               --set-env-vars \
                 DATABASE_URL="${DATABASE_URL}" \
                 DATABASE_URL_UNPOOLED="${DATABASE_URL_UNPOOLED}" \
+                CORS_ORIGINS="${EFFECTIVE_CORS}" \
                 HOST="0.0.0.0" \
                 PORT="8000" \
                 ENVIRONMENT="production" \
@@ -193,6 +239,7 @@ jobs:
               --env-vars \
                 DATABASE_URL="${DATABASE_URL}" \
                 DATABASE_URL_UNPOOLED="${DATABASE_URL_UNPOOLED}" \
+                CORS_ORIGINS="${EFFECTIVE_CORS}" \
                 HOST="0.0.0.0" \
                 PORT="8000" \
                 ENVIRONMENT="production" \
@@ -224,7 +271,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       github.event_name != 'pull_request' &&
       vars.ENABLE_FRONTEND_DEPLOY == 'true'
-    needs: [backend-ci]
+    needs: [backend-ci, frontend-ci, deploy-backend]
     runs-on: ubuntu-latest
     environment: production
     steps:
@@ -248,6 +295,9 @@ jobs:
           context: ./frontend
           file: ./frontend/Dockerfile
           push: true
+          build-args: |
+            NEXT_PUBLIC_BACKEND_URL=${{ vars.NEXT_PUBLIC_BACKEND_URL || '' }}
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL || '' }}
           tags: |
             ${{ secrets.ACR_LOGIN_SERVER }}/breathe-frontend:${{ github.sha }}
             ${{ secrets.ACR_LOGIN_SERVER }}/breathe-frontend:latest
@@ -259,7 +309,6 @@ jobs:
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
           ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
           ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           az extension add --name containerapp --upgrade --yes
@@ -267,6 +316,10 @@ jobs:
           FRONTEND_APP="breathe-frontend"
           FRONTEND_IMAGE="${ACR_LOGIN_SERVER}/${FRONTEND_APP}:${IMAGE_TAG}"
           BACKEND_FQDN=$(az containerapp show --name breathe-backend --resource-group "${RESOURCE_GROUP}" --query properties.configuration.ingress.fqdn -o tsv || echo "")
+          BACKEND_URL=""
+          if [ -n "${BACKEND_FQDN}" ]; then
+            BACKEND_URL="https://${BACKEND_FQDN}"
+          fi
 
           if az containerapp show --name "${FRONTEND_APP}" --resource-group "${RESOURCE_GROUP}" > /dev/null 2>&1; then
             az containerapp update \
@@ -274,8 +327,7 @@ jobs:
               --resource-group "${RESOURCE_GROUP}" \
               --image "${FRONTEND_IMAGE}" \
               --set-env-vars \
-                NEXT_PUBLIC_API_URL="https://${BACKEND_FQDN}" \
-                DATABASE_URL="${DATABASE_URL}" \
+                BACKEND_API_URL="${BACKEND_URL}" \
                 PORT="3000" \
                 NODE_ENV="production"
           else
@@ -294,8 +346,7 @@ jobs:
               --cpu 0.5 \
               --memory 1.0Gi \
               --env-vars \
-                NEXT_PUBLIC_API_URL="https://${BACKEND_FQDN}" \
-                DATABASE_URL="${DATABASE_URL}" \
+                BACKEND_API_URL="${BACKEND_URL}" \
                 PORT="3000" \
                 NODE_ENV="production"
           fi

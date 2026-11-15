@@ -210,14 +210,17 @@ class IngestionService:
         db: Session,
         variables: Optional[List[str]] = None,
         dry_run: bool = False,
+        step_hours: int = 1,
+        cleanup_after: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Pulls authentic granules from NASA NCCS DataShare over a time range
-        and ingests each into the system.
+        and ingests each into the system without evicting files mid-batch.
         """
         start_dt = pd.to_datetime(start_time, utc=True).to_pydatetime()
         end_dt = pd.to_datetime(end_time, utc=True).to_pydatetime()
-        hours = pd.date_range(start=start_dt, end=end_dt, freq="1h")
+        freq = f"{max(1, int(step_hours))}h"
+        hours = pd.date_range(start=start_dt, end=end_dt, freq=freq)
 
         results = []
         for h in hours:
@@ -231,12 +234,16 @@ class IngestionService:
                 continue
 
             try:
-                local_file = self.provider.fetch_granule(iso_time)
+                local_file = self.provider.fetch_granule(iso_time, auto_cleanup=False)
                 res = self.ingest_local_file(local_file, db=db, dry_run=False)
                 results.append(res)
             except Exception as e:
                 logger.error(f"Failed remote ingest for {iso_time}: {e}")
                 results.append({"timestamp": iso_time, "status": "failed", "error": str(e)})
+
+        if not dry_run and cleanup_after:
+            keep_count = max(settings.MAX_RAW_FILES_TO_KEEP, len(hours))
+            self.provider.cleanup_old_granules(max_files=keep_count)
 
         return results
 

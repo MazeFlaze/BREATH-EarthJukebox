@@ -9,6 +9,10 @@ import {
   pointInPolygonCoords,
   serializePolygonRingsForApi,
 } from "./geoUtils";
+import {
+  fetchBackendTemporalSeries,
+  resolveBackendRequestUrl,
+} from "../services/backendApi";
 import type { GeoBounds, GeoPoint, LayerDefinition, LayerKey, RegionStats } from "@/types/breathe";
 
 type ColormapName = LayerDefinition["cmap"];
@@ -1308,6 +1312,7 @@ let backendUnavailableUntil = 0;
 
 export function resetBackendCircuitBreaker(): void {
   backendUnavailableUntil = 0;
+  pointSeriesCache.clear();
 }
 
 export function getBackendCircuitBreakerUntil(): number {
@@ -1342,7 +1347,8 @@ export async function samplePolygonSeries(
   layerKey: LayerKey,
   polygon: GeoPoint[],
   boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon,
-  bounds?: GeoBounds
+  bounds?: GeoBounds,
+  targetTimestamp?: string
 ): Promise<number[]> {
   const layer = getLayerDefinition(layerKey);
   if (!layer.available || layerKey === "AOD") {
@@ -1356,8 +1362,7 @@ export async function samplePolygonSeries(
     return results.map((stat) => (stat.mean !== null ? stat.mean : layer.vmin));
   };
 
-  const baseUrl = getBackendBaseUrl();
-  if (baseUrl && Date.now() >= backendUnavailableUntil) {
+  if (Date.now() >= backendUnavailableUntil) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const effectiveBounds =
@@ -1374,17 +1379,18 @@ export async function samplePolygonSeries(
       const lonMax = Number(Math.max(effectiveBounds.west, effectiveBounds.east).toFixed(4));
 
       const controller = new AbortController();
-      timer = setTimeout(() => controller.abort(), 2500);
+      timer = setTimeout(() => controller.abort(), 5000);
       const serializedRings = serializePolygonRingsForApi(boundaryGeometry ?? polygon, 320);
-      const response = await fetch(`${baseUrl}/api/v1/jukebox/region`, {
+      const response = await fetch(resolveBackendRequestUrl("/api/v1/jukebox/region"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         body: JSON.stringify({
           datasetId: "geos-cf-v2-aqc",
-          timestamp: timeSlots[0] ?? "2026-11-12T00:30:00Z",
+          timestamp: targetTimestamp ?? timeSlots[0] ?? "2026-11-12T00:30:00Z",
           variable: layerKey,
           includeSeries: true,
+          seriesStepHours: 3,
           bounds: {
             latMin,
             latMax,
@@ -1397,6 +1403,7 @@ export async function samplePolygonSeries(
       });
 
       if (response.ok) {
+        backendUnavailableUntil = 0;
         const payload = (await response.json()) as BackendRegionResponse;
         if (
           Array.isArray(payload.series) &&
@@ -1418,26 +1425,67 @@ export async function samplePolygonSeries(
   return runOfflineFallback();
 }
 
-const pointSeriesCache = new Map<string, number[]>();
+export interface PointSeriesResult {
+  values: number[];
+  sourceKind: "backend-temporal" | "geos-cf-raster";
+}
+
+const pointSeriesCache = new Map<string, PointSeriesResult>();
 
 /**
- * Lazily samples an 8-slot diurnal GEOS-CF curve at a geographic coordinate,
- * yielding between frames to keep UI interactions responsive.
+ * Samples a diurnal GEOS-CF curve at a geographic coordinate, preferring FastAPI
+ * /api/v1/jukebox/temporal when online and falling back cleanly to local raster PNGs.
  */
-export async function samplePointSeries(
+export async function samplePointSeriesDetailed(
   layerKey: LayerKey,
   lat: number,
   lon: number,
   fallbackValue?: number
-): Promise<number[]> {
+): Promise<PointSeriesResult> {
   const layer = getLayerDefinition(layerKey);
-  if (!layer.available || layerKey === "AOD") return [];
+  if (!layer.available || layerKey === "AOD") {
+    return { values: [], sourceKind: "geos-cf-raster" };
+  }
   const cacheKey = `${layerKey}:${lat.toFixed(2)}:${lon.toFixed(2)}`;
   const cached = pointSeriesCache.get(cacheKey);
   if (cached) return cached;
 
-  const span = layer.vmax - layer.vmin;
   const fallback = fallbackValue ?? layer.vmin;
+
+  if (Date.now() >= backendUnavailableUntil) {
+    const start = timeSlots[0] ?? "2026-11-12T00:30:00Z";
+    const end = timeSlots[timeSlots.length - 1] ?? "2026-11-12T21:30:00Z";
+    const remote = await fetchBackendTemporalSeries({
+      lat,
+      lon,
+      variable: layerKey,
+      start,
+      end,
+      interval: "3h",
+      normalizationMethod: "log_scale",
+      offlineOnly: true,
+    });
+    if (remote && remote.points.length > 0) {
+      const apiValues = remote.points
+        .map((pt) => pt.displayValue ?? pt.value)
+        .filter((v): v is number => typeof v === "number" && Number.isFinite(v))
+        .map((v) => Number(v.toFixed(1)));
+      if (apiValues.length >= 2) {
+        const result: PointSeriesResult = {
+          values: apiValues,
+          sourceKind: "backend-temporal",
+        };
+        if (pointSeriesCache.size >= 24) {
+          const oldest = pointSeriesCache.keys().next().value;
+          if (oldest !== undefined) pointSeriesCache.delete(oldest);
+        }
+        pointSeriesCache.set(cacheKey, result);
+        return result;
+      }
+    }
+  }
+
+  const span = layer.vmax - layer.vmin;
   const values: number[] = [];
   let validCount = 0;
 
@@ -1462,13 +1510,28 @@ export async function samplePointSeries(
     values.push(Number((layer.vmin + t * span).toFixed(1)));
   }
 
-  if (validCount === 0) return [];
+  if (validCount === 0) return { values: [], sourceKind: "geos-cf-raster" };
+  const result: PointSeriesResult = { values, sourceKind: "geos-cf-raster" };
   if (pointSeriesCache.size >= 24) {
     const oldest = pointSeriesCache.keys().next().value;
     if (oldest !== undefined) pointSeriesCache.delete(oldest);
   }
-  pointSeriesCache.set(cacheKey, values);
-  return values;
+  pointSeriesCache.set(cacheKey, result);
+  return result;
+}
+
+/**
+ * Lazily samples an 8-slot diurnal GEOS-CF curve at a geographic coordinate,
+ * yielding between frames to keep UI interactions responsive.
+ */
+export async function samplePointSeries(
+  layerKey: LayerKey,
+  lat: number,
+  lon: number,
+  fallbackValue?: number
+): Promise<number[]> {
+  const result = await samplePointSeriesDetailed(layerKey, lat, lon, fallbackValue);
+  return result.values;
 }
 
 /**
@@ -1487,11 +1550,10 @@ export async function fetchBackendRegionStats(
     return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
   }
 
-  const baseUrl = getBackendBaseUrl();
   const safeIndex = Math.max(0, Math.min(timeSlots.length - 1, timeIndex));
   const timestamp = timeSlots[safeIndex] ?? "2026-11-12T00:30:00Z";
 
-  if (!baseUrl || Date.now() < backendUnavailableUntil) {
+  if (Date.now() < backendUnavailableUntil) {
     return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
   }
 
@@ -1511,9 +1573,9 @@ export async function fetchBackendRegionStats(
     const lonMax = Number(Math.max(effectiveBounds.west, effectiveBounds.east).toFixed(4));
 
     const controller = new AbortController();
-    timer = setTimeout(() => controller.abort(), 2200);
+    timer = setTimeout(() => controller.abort(), 3500);
     const serializedRings = serializePolygonRingsForApi(boundaryGeometry ?? polygon, 320);
-    const response = await fetch(`${baseUrl}/api/v1/jukebox/region`, {
+    const response = await fetch(resolveBackendRequestUrl("/api/v1/jukebox/region"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: controller.signal,
@@ -1536,6 +1598,8 @@ export async function fetchBackendRegionStats(
       backendUnavailableUntil = Date.now() + 30000;
       return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
     }
+
+    backendUnavailableUntil = 0;
 
     const payload = (await response.json()) as BackendRegionResponse;
     const summary = payload.summary;

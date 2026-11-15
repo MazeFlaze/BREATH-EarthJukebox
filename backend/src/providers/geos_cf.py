@@ -1,6 +1,6 @@
 import hashlib
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import httpx
@@ -180,7 +180,39 @@ class GEOSCFProvider(BaseNasaProvider):
                         pass
         return sorted(list(set(times)))
 
-    def fetch_granule(self, timestamp: str, target_dir: Optional[Path] = None) -> Path:
+    def discover_latest_available_date(
+        self,
+        max_lookback_days: int = 7,
+        reference_date: Optional[datetime] = None,
+    ) -> Optional[str]:
+        """
+        Probes NASA NCCS DataShare backward from today (UTC) to locate the newest
+        published UTC date (YYYY-MM-DD) containing an hourly GEOS-CF v2 granule.
+        """
+        anchor = (reference_date or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        timeout = min(self.timeout_seconds, 10)
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            for offset in range(max_lookback_days + 1):
+                candidate_day = anchor - timedelta(days=offset)
+                for probe_hour in (0, 3):
+                    probe_dt = candidate_day.replace(hour=probe_hour, minute=30, second=0, microsecond=0)
+                    url = self.build_remote_url(probe_dt)
+                    try:
+                        resp = client.head(url)
+                        if resp.status_code == 200:
+                            date_str = probe_dt.strftime("%Y-%m-%d")
+                            logger.info(f"Discovered latest remote NASA GEOS-CF date: {date_str} ({url})")
+                            return date_str
+                    except Exception as exc:
+                        logger.debug(f"HEAD probe failed for {url}: {exc}")
+        return None
+
+    def fetch_granule(
+        self,
+        timestamp: str,
+        target_dir: Optional[Path] = None,
+        auto_cleanup: bool = True,
+    ) -> Path:
         """
         Downloads authentic NetCDF granule from NASA NCCS DataShare if not already present.
         Validates SHA256, uses atomic write (.tmp -> .nc4), and retries with backoff.
@@ -219,7 +251,8 @@ class GEOSCFProvider(BaseNasaProvider):
                 # Atomic rename
                 temp_path.rename(final_path)
                 logger.info(f"Successfully downloaded {filename} ({final_path.stat().st_size} bytes, SHA256: {sha256.hexdigest()[:12]}...)")
-                self.cleanup_old_granules()
+                if auto_cleanup:
+                    self.cleanup_old_granules()
                 return final_path
 
             except Exception as e:
