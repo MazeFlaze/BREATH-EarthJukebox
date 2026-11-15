@@ -1,0 +1,82 @@
+title = "BREATHE Secret Scanning Configuration"
+minVersion = "8.30.0"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore lockfiles, virtual environments, build artifacts, and raw scientific binaries"
+paths = [
+  '''^node_modules/''',
+  '''^frontend/node_modules/''',
+  '''^frontend/\.next/''',
+  '''^backend/\.venv/''',
+  '''^\.venv/''',
+  '''package-lock\.json$''',
+  '''backend/uv\.lock$''',
+  '''\.(?:nc4?|parquet|hdf|he5|h5|png|jpg|jpeg|webp|gif|ico|mp3|wav|woff2?|db|sqlite3?)$''',
+]
+
+[[rules]]
+id = "neon-postgres-password"
+description = "Neon PostgreSQL password token (npg_)"
+regex = '''\bnpg_[A-Za-z0-9_-]{8,}\b'''
+tags = ["neon", "postgres", "credential"]
+
+[[rules]]
+id = "neon-api-key"
+description = "Neon API key (napi_)"
+regex = '''\bnapi_[A-Za-z0-9_-]{12,}\b'''
+tags = ["neon", "api-key"]
+
+[[rules]]
+id = "neon-auth-token"
+description = "Neon branch-scoped credential token (nak_live_)"
+regex = '''\bnak_live_[A-Za-z0-9_-]{12,}\b'''
+tags = ["neon", "token"]
+
+[[rules]]
+id = "postgres-uri-with-password"
+description = "PostgreSQL connection URI containing embedded non-placeholder credentials"
+regex = '''postgres(?:ql)?://[A-Za-z0-9._-]+:([^@\s"'`<>]{4,})@[A-Za-z0-9.<>-]+'''
+secretGroup = 1
+tags = ["postgres", "connection-string"]
+
+  [[rules.allowlists]]
+  description = "Allow documentation placeholders and local test URLs"
+  regexes = [
+    '''^(\.\.\.|<[^>]+>|password|pass|your[-_a-z0-9]*|changeme|example|placeholder|redacted|masked)$''',
+  ]
+
+[[rules]]
+id = "azure-storage-account-key"
+description = "Azure Storage Account connection string AccountKey"
+regex = '''AccountKey=([A-Za-z0-9+/=]{20,})'''
+secretGroup = 1
+tags = ["azure", "storage"]
+
+[[rules]]
+id = "azure-service-principal-secret"
+description = "Azure Service Principal JSON clientSecret"
+regex = '''(?i)"clientSecret"\s*:\s*"([^"\s<.]{10,})"'''
+secretGroup = 1
+tags = ["azure", "service-principal"]
+
+  [[rules.allowlists]]
+  description = "Allow example documentation placeholders"
+  regexes = [
+    '''^(\.\.\.|<[^>]+>|your[-_a-z0-9]*|example|placeholder)$''',
+  ]
+
+[[rules]]
+id = "nasa-earthdata-password"
+description = "Hardcoded NASA Earthdata password assignment"
+regex = '''(?i)NASA_EARTHDATA_PASSWORD\s*=\s*["']?([^\s"'<>]{6,})["']?'''
+secretGroup = 1
+tags = ["nasa", "credential"]
+
+  [[rules.allowlists]]
+  description = "Allow documentation placeholders"
+  regexes = [
+    '''^(\.\.\.|<[^>]+>|your[-_a-z0-9]*|example|placeholder|changeme)$''',
+  ]
