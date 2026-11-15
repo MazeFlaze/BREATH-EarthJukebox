@@ -10,6 +10,7 @@ from .api.routes.observations import router as observations_router
 from .api.routes.jukebox import router as jukebox_router
 from .api.routes.datasets import router as datasets_router
 from .api.routes.locations import router as locations_router
+from .api.routes.scientific_sessions import router as scientific_sessions_router
 from .core.config import settings
 from .core.database import init_db
 from .utils.logger import logger
@@ -50,6 +51,7 @@ app.include_router(observations_router, prefix="/api/v1")
 app.include_router(jukebox_router, prefix="/api/v1")
 app.include_router(datasets_router, prefix="/api/v1")
 app.include_router(locations_router, prefix="/api/v1")
+app.include_router(scientific_sessions_router, prefix="/api/v1")
 
 
 @app.get("/", tags=["Root"])
@@ -65,6 +67,8 @@ def root():
         "jukebox_temporal": "/api/v1/jukebox/temporal",
         "datasets": "/api/v1/datasets",
         "locations": "/api/v1/locations",
+        "scientific_catalog": "/api/v1/scientific/catalog",
+        "scientific_sessions": "/api/v1/scientific/sessions",
         "air_quality": "/api/v1/observations/air-quality",
         "aod": "/api/v1/observations/aod",
     }
