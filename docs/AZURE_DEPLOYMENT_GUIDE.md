@@ -59,18 +59,46 @@ Script sẽ tự động:
 
 ---
 
-## 3. Cách 2: Tự Động Deploy Bằng GitHub Actions
+## 3. Cách 2: Tự Động Hóa Bằng CI/CD GitHub Actions (Chuẩn AlgoViz)
 
-Repository đã được trang bị workflow CI/CD tại [`.github/workflows/deploy-azure.yml`](file:///.github/workflows/deploy-azure.yml).
+Repository sử dụng workflow hợp nhất tại [`.github/workflows/breathe-ci-cd.yml`](file:///.github/workflows/breathe-ci-cd.yml):
+
+```mermaid
+flowchart TD
+    A["Pull Request vào main"] --> B["CI Pipeline"]
+    C["Push/Merge vào main"] --> B
+
+    subgraph CI["1. Continuous Integration (CI)"]
+        B --> B1["Backend CI: Python 3.12, NetCDF4, Pytest"]
+        B --> B2["Frontend CI: Node 20, Lint, Typecheck, Next.js Standalone Build"]
+    end
+
+    B1 --> D{"Tất cả CI Pass?"}
+    B2 --> D
+
+    D -- "Nếu là PR" --> E["Báo Green trên PR, cho phép Merge"]
+    D -- "Nếu Merge vào main" --> F{"Kiểm tra Azure Secrets?"}
+
+    subgraph CD["2. Continuous Deployment (CD Production)"]
+        F -- "Có đủ Secrets" --> G1["Docker Build & Push Backend/Frontend lên ACR"]
+        G1 --> G2["Deploy/Update Azure Container Apps (Scale-to-Zero)"]
+        G2 --> G3["Smoke Test Health Endpoint (/api/v1/health & Next.js)"]
+        F -- "Chưa cấu hình Secrets" --> H["Log thông báo hướng dẫn cấu hình (Skip an toàn)"]
+    end
+```
 
 ### Các Secrets cần cấu hình trên GitHub (`Settings > Secrets and variables > Actions`):
 - `AZURE_CREDENTIALS`: JSON Service Principal từ lệnh `az ad sp create-for-rbac`.
 - `AZURE_RESOURCE_GROUP`: `rg-breathe-earth-jukebox`
-- `ACR_LOGIN_SERVER`: `<your-acr>.azurecr.io`
+- `ACR_LOGIN_SERVER`: `<your-acr>.azurecr.io` (ví dụ: `ca951f3ca84aacr.azurecr.io`)
 - `ACR_USERNAME`: `<your-acr-username>`
 - `ACR_PASSWORD`: `<your-acr-password>`
+- `DATABASE_URL`: Chuỗi kết nối Neon PostgreSQL (Pooled).
+- `DATABASE_URL_UNPOOLED`: Chuỗi kết nối Neon PostgreSQL (Unpooled).
 
-Sau khi cấu hình, chỉ cần vào tab **Actions**, chọn **Deploy to Azure Container Apps** và nhấn **Run workflow**.
+### Cơ chế hoạt động:
+1. **Khi mở Pull Request vào `main`**: Hệ thống chạy song song kiểm thử Backend (Pytest) và Frontend (Lint + TypeScript + Standalone Build). Job Deploy không chạy trên PR.
+2. **Khi Pull Request được Merge vào `main`**: Sau khi toàn bộ test pass, hệ thống sẽ **tự động build Docker images, đẩy lên ACR và deploy/cập nhật Azure Container Apps**. Kết quả deployment kèm link truy cập sẽ xuất hiện trực tiếp trong GitHub Actions Job Summary.
 
 ---
 
