@@ -1,16 +1,18 @@
 import mockData from "@/data/observations.json";
 import { Dataset } from "@/types/dataset";
 import { Observation } from "@/types/observation";
+import { resolveBackendRequestUrl } from "./backendApi";
 
 /**
  * Data Service (Frontend)
- * 
+ *
  * Primary integration boundary for Workstream N01 (Data Engineering) and N04 (Frontend).
  * Manages atmospheric datasets, observation queries, and provenance validation.
- * 
+ *
  * Integration Behavior:
- * - When NEXT_PUBLIC_BACKEND_URL is reachable, queries the Python FastAPI Backend.
- * - When Backend is offline or unconfigured, gracefully falls back to local data.
+ * - Queries FastAPI via NEXT_PUBLIC_BACKEND_URL when explicitly set, or via the same-origin
+ *   Next.js runtime proxy (/api/v1/...) backed by server BACKEND_API_URL.
+ * - When Backend is offline or unreachable, gracefully falls back to bundled local dataset.
  * - Employs single-flight promise caching to prevent multiple redundant HTTP requests during initialization.
  */
 class DataService {
@@ -29,31 +31,25 @@ class DataService {
    * Prevents repeated checks during the same initialization cycle.
    */
   public async getDataset(): Promise<Dataset> {
-    const rawBackendUrl =
-      process.env.NEXT_PUBLIC_BACKEND_URL?.trim() ||
-      process.env.NEXT_PUBLIC_API_URL?.trim();
-    const backendUrl =
-      rawBackendUrl && rawBackendUrl !== "undefined" && rawBackendUrl !== "null"
-        ? rawBackendUrl.replace(/\/+$/, "").replace(/\/api\/v1\/?$/i, "")
-        : "";
-
     // Return in-flight fetch promise if an initialization request is already pending
     if (this.pendingFetchPromise) {
       return this.pendingFetchPromise;
     }
 
-    if (backendUrl && !this.backendChecked && typeof window !== "undefined") {
+    if (!this.backendChecked && typeof window !== "undefined") {
       this.pendingFetchPromise = (async () => {
         try {
           // Query primary SVS 5533 Air Quality endpoint, fallback to AOD
-          let response = await fetch(`${backendUrl}/api/v1/observations/air-quality`, {
-            headers: { Accept: "application/json" },
-          });
+          let response = await fetch(
+            resolveBackendRequestUrl("/api/v1/observations/air-quality"),
+            { headers: { Accept: "application/json" } }
+          );
 
           if (!response.ok) {
-            response = await fetch(`${backendUrl}/api/v1/observations/aod`, {
-              headers: { Accept: "application/json" },
-            });
+            response = await fetch(
+              resolveBackendRequestUrl("/api/v1/observations/aod"),
+              { headers: { Accept: "application/json" } }
+            );
           }
 
           if (response.ok) {
