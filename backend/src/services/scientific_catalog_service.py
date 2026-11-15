@@ -1,4 +1,5 @@
 """Read verified exports. No network, download, ingestion, or scientific fallback."""
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -7,7 +8,6 @@ from fastapi import HTTPException
 from ..api.schemas.geos_cf_catalog_schema import CatalogEntry, GeosCfCatalog
 from ..api.schemas.geos_cf_detail_schema import GeosCfDetail
 from ..core.config import settings
-from ..providers.geos_cf_provenance import checksum_file
 
 __all__ = ["ScientificCatalog"]
 
@@ -47,10 +47,10 @@ class ScientificCatalog:
             if manifest.source.sha256 != entry.id or manifest.source.timestamp_utc != entry.timestamp_utc:
                 raise ValueError("Source identity differs")
             field = manifest.fields[pollutant]
-            path = self._path(f"{entry.id}/native-{pollutant}.f32")
-            if path.stat().st_size != manifest.rows * manifest.cols * 4 or checksum_file(path) != field.sha256:
+            raw = self._path(f"{entry.id}/native-{pollutant}.f32").read_bytes()
+            if len(raw) != manifest.rows * manifest.cols * 4 or hashlib.sha256(raw).hexdigest() != field.sha256:
                 raise ValueError("Native checksum or size differs")
-            values = np.fromfile(path, dtype="<f4").reshape(manifest.rows, manifest.cols)
+            values = np.frombuffer(raw, dtype="<f4").reshape(manifest.rows, manifest.cols)
             finite = np.isfinite(values)
             if np.isinf(values).any() or (values[finite] < 0).any() or int(finite.sum()) != field.valid_count:
                 raise ValueError("Native coverage or values differ")

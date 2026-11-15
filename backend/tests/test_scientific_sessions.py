@@ -1,5 +1,6 @@
 """Synthetic isolated fixtures; cross-language parity with the existing demo implementation."""
 import base64
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -13,18 +14,26 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 try:
-    from backend.src.api.schemas.geos_cf_catalog_schema import CatalogEntry
+    from backend.src.api.schemas.geos_cf_catalog_schema import CatalogEntry, GeosCfCatalog
+    from backend.src.api.schemas.geos_cf_detail_schema import DetailField, GeosCfDetail
+    from backend.src.api.schemas.notebook_demo_schema import DemoSource
     from backend.src.api.schemas.scientific_session_schema import SessionRequest
     from backend.src.api.routes import scientific_sessions as routes
     from backend.src.processors.scientific_session_processor import _crop, context_plan, join_views, prepare_view
+    from backend.src.providers import geos_cf_provenance as provenance
+    from backend.src.services import scientific_catalog_service as catalog_service
     from backend.src.services.scientific_catalog_service import ScientificCatalog
     from backend.src.services.scientific_session_service import ScientificSessionService
     from backend.src.main import app
 except ImportError:
-    from src.api.schemas.geos_cf_catalog_schema import CatalogEntry
+    from src.api.schemas.geos_cf_catalog_schema import CatalogEntry, GeosCfCatalog
+    from src.api.schemas.geos_cf_detail_schema import DetailField, GeosCfDetail
+    from src.api.schemas.notebook_demo_schema import DemoSource
     from src.api.schemas.scientific_session_schema import SessionRequest
     from src.api.routes import scientific_sessions as routes
     from src.processors.scientific_session_processor import _crop, context_plan, join_views, prepare_view
+    from src.providers import geos_cf_provenance as provenance
+    from src.services import scientific_catalog_service as catalog_service
     from src.services.scientific_catalog_service import ScientificCatalog
     from src.services.scientific_session_service import ScientificSessionService
     from src.main import app
@@ -141,3 +150,168 @@ def test_catalog_does_not_fallback_or_allow_path_escape(tmp_path):
     with pytest.raises(HTTPException) as corrupt:
         reader.read()
     assert corrupt.value.status_code == 409
+
+
+def test_scientific_catalog_field_reads_native_file_once_and_verifies_integrity(tmp_path, monkeypatch):
+    sha64 = "a" * 64
+    filename = "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0030z.R0.nc4"
+    source_url = "https://portal.nccs.nasa.gov/datashare/gmao/geos-cf/v2/ana/Y2026/M11/D12/" + filename
+    entry = CatalogEntry(
+        id=sha64,
+        filename=filename,
+        timestamp_utc=START,
+        sha256=sha64,
+        size_bytes=1024,
+        status="ready",
+        provenance="download_receipt",
+        detail_url=f"/data/catalog/{sha64}/detail.json",
+        source_url=source_url,
+    )
+    catalog = GeosCfCatalog(generated_at=START, entries=[entry], gaps=[], ready_count=1)
+    (tmp_path / "index.json").write_text(catalog.model_dump_json(indent=2), encoding="utf-8")
+
+    snapshot_dir = tmp_path / sha64
+    snapshot_dir.mkdir()
+    detail_path = snapshot_dir / "detail.json"
+    f32_path = snapshot_dir / "native-pm25_rh35.f32"
+
+    def write_native(grid: np.ndarray, *, valid_count_override: int | None = None) -> GeosCfDetail:
+        raw = np.asarray(grid, dtype="<f4").tobytes(order="C")
+        f32_path.write_bytes(raw)
+        finite = grid[np.isfinite(grid)]
+        detail = GeosCfDetail(
+            source=DemoSource(
+                provider="NASA GMAO",
+                collection="aqc_tavg_1hr_glo_L1440x721_slv",
+                source_file=filename,
+                source_url=source_url,
+                sha256=sha64,
+                timestamp_utc=START,
+                grid_shape=(721, 1440),
+            ),
+            calibration_version="test-calibration-v1",
+            fields={
+                "pm25_rh35": DetailField(
+                    url=f"/data/catalog/{sha64}/native-pm25_rh35.f32",
+                    sha256=hashlib.sha256(raw).hexdigest(),
+                    unit="µg/m³",
+                    audio_max=100.0,
+                    valid_count=int(finite.size) if valid_count_override is None else valid_count_override,
+                    minimum=float(finite.min()) if finite.size else None,
+                    maximum=float(finite.max()) if finite.size else None,
+                )
+            },
+        )
+        detail_path.write_text(detail.model_dump_json(indent=2), encoding="utf-8")
+        return detail
+
+    base_grid = values()
+    assert (base_grid == 0.0).any() and (base_grid > 0.0).any() and np.isnan(base_grid).any()
+    expected_detail = write_native(base_grid)
+
+    read_bytes_calls: list[Path] = []
+    open_calls: list[Path] = []
+    checksum_calls: list[Path] = []
+    fromfile_calls: list[Path] = []
+    original_read_bytes = Path.read_bytes
+    original_open = Path.open
+    original_checksum = provenance.checksum_file
+    original_fromfile = np.fromfile
+
+    def spy_read_bytes(self: Path) -> bytes:
+        read_bytes_calls.append(self.resolve())
+        return original_read_bytes(self)
+
+    def spy_open(self: Path, *args, **kwargs):
+        open_calls.append(self.resolve())
+        return original_open(self, *args, **kwargs)
+
+    def spy_checksum(path: Path) -> str:
+        checksum_calls.append(Path(path).resolve())
+        return original_checksum(path)
+
+    def spy_fromfile(file, *args, **kwargs):
+        fromfile_calls.append(Path(file).resolve() if isinstance(file, (str, Path)) else file)
+        return original_fromfile(file, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_bytes", spy_read_bytes)
+    monkeypatch.setattr(Path, "open", spy_open)
+    monkeypatch.setattr(provenance, "checksum_file", spy_checksum)
+    if hasattr(catalog_service, "checksum_file"):
+        monkeypatch.setattr(catalog_service, "checksum_file", spy_checksum)
+    monkeypatch.setattr(np, "fromfile", spy_fromfile)
+
+    reader = ScientificCatalog(tmp_path)
+    loaded_catalog = reader.read()
+    detail, actual = reader.field(loaded_catalog.entries[0], "pm25_rh35")
+
+    assert detail == expected_detail
+    assert actual.shape == (721, 1440)
+    assert actual.dtype == np.dtype("<f4")
+    assert np.array_equal(actual, base_grid, equal_nan=True)
+    assert int(np.isfinite(actual).sum()) == expected_detail.fields["pm25_rh35"].valid_count
+    assert read_bytes_calls.count(f32_path.resolve()) == 1
+    assert open_calls.count(f32_path.resolve()) == 1
+    assert f32_path.resolve() not in checksum_calls
+    assert f32_path.resolve() not in fromfile_calls
+
+    request = SessionRequest(
+        pollutant="pm25_rh35",
+        start=START,
+        end=START,
+        axis="horizontal",
+        resolution=5,
+        traversal="time",
+        scope="global",
+        regions=[],
+    )
+    view = prepare_view(actual, request, detail.fields["pm25_rh35"].audio_max, None)
+    assert view["rows"] > 0 and view["cols"] > 0
+
+    mutated = bytearray(base_grid.tobytes(order="C"))
+    mutated[0] ^= 0x01
+    f32_path.write_bytes(bytes(mutated))
+    with pytest.raises(HTTPException) as bad_hash:
+        reader.field(entry, "pm25_rh35")
+    assert bad_hash.value.status_code == 409
+
+    f32_path.write_bytes(base_grid.tobytes(order="C")[:-4])
+    with pytest.raises(HTTPException) as bad_size:
+        reader.field(entry, "pm25_rh35")
+    assert bad_size.value.status_code == 409
+
+    inf_grid = base_grid.copy()
+    inf_grid[0, 1] = np.inf
+    write_native(inf_grid)
+    with pytest.raises(HTTPException) as bad_inf:
+        reader.field(entry, "pm25_rh35")
+    assert bad_inf.value.status_code == 409
+
+    neg_grid = base_grid.copy()
+    neg_grid[0, 1] = np.float32(-0.5)
+    write_native(neg_grid)
+    with pytest.raises(HTTPException) as bad_neg:
+        reader.field(entry, "pm25_rh35")
+    assert bad_neg.value.status_code == 409
+
+    write_native(base_grid, valid_count_override=int(np.isfinite(base_grid).sum()) - 1)
+    with pytest.raises(HTTPException) as bad_count:
+        reader.field(entry, "pm25_rh35")
+    assert bad_count.value.status_code == 409
+
+    write_native(base_grid)
+    f32_path.unlink()
+    with pytest.raises(HTTPException) as missing_file:
+        reader.field(entry, "pm25_rh35")
+    assert missing_file.value.status_code == 404
+
+
+def test_default_catalog_root_resolves_for_repo_and_container(tmp_path):
+    try:
+        from backend.src.core.config import _default_catalog_root
+    except ImportError:
+        from src.core.config import _default_catalog_root
+
+    assert _default_catalog_root(Path("/app/src/core/config.py")) == Path("/app/data/geos-cf-catalog")
+    (tmp_path / "frontend").mkdir()
+    assert _default_catalog_root(tmp_path / "backend/src/core/config.py") == tmp_path / "frontend/public/data/geos-cf-catalog"
