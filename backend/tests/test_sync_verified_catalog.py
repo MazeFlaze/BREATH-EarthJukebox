@@ -426,9 +426,9 @@ def test_cli_flags_and_module_entrypoint_parse_cleanly(tmp_path, monkeypatch):
     assert cli.resolve_reference_contract(existing_contract) == existing_contract
     assert cli.resolve_reference_contract(tmp_path / "absent.json") is None
 
-    venv_python = BACKEND_DIR / ".venv" / "bin" / "python"
+    python_exe = sys.executable
     root_help = subprocess.run(
-        [str(venv_python), "-m", "backend.scripts.sync_verified_catalog", "--help"],
+        [python_exe, "-m", "backend.scripts.sync_verified_catalog", "--help"],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -448,7 +448,7 @@ def test_cli_flags_and_module_entrypoint_parse_cleanly(tmp_path, monkeypatch):
 
     env = {**os.environ, "PYTHONPATH": "src:."}
     backend_help = subprocess.run(
-        [str(venv_python), "scripts/sync_verified_catalog.py", "--help"],
+        [python_exe, "scripts/sync_verified_catalog.py", "--help"],
         cwd=BACKEND_DIR,
         env=env,
         capture_output=True,
