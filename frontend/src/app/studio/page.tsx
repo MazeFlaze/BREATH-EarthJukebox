@@ -68,6 +68,7 @@ export default function StudioPage() {
 
   const clock = useAudioClock();
   const [vizTab, setVizTab] = useState<"waveform" | "spectrogram" | "rhythm" | "particles">("waveform");
+  const [scanLocked, setScanLocked] = useState(false);
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -203,6 +204,8 @@ export default function StudioPage() {
                 ariaLabel="Active geographic region"
                 selection={selection}
                 territories={territories}
+                disabled={scanLocked}
+                title={scanLocked ? "Close 2D Scan to switch territory" : undefined}
                 onSelectValue={selectPreset}
               />
 
@@ -273,6 +276,7 @@ export default function StudioPage() {
                 boundaryKind={selection.boundaryKind}
                 onPolygonChange={(pts) => setPolygon(pts, "Edited Studio region", "custom")}
                 onSelectTerritory={selectTerritory}
+                onScanLockChange={setScanLocked}
                 tool="select"
                 showLabels
                 showScaleBar

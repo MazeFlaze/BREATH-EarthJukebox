@@ -24,7 +24,8 @@ import {
   buildResolvedTerritory,
   findTerritoryFeature,
   getCachedWorldBoundaries,
-  loadWorldBoundaries,
+  loadWorldBoundariesDetailed,
+  loadWorldBoundariesQuick,
   resolveTerritoryByCodeOrName,
 } from "@/lib/worldBoundaries";
 import { sonificationService } from "@/services/sonificationService";
@@ -43,6 +44,33 @@ import type {
 } from "@/types/breathe";
 
 const DEFAULT_SELECTION = presetSelections[0];
+
+/** Schedules non-critical background work so initial 3D globe rendering stays uncontested. */
+function scheduleWhenIdle(task: () => void, timeoutMs: number): () => void {
+  if (typeof window === "undefined") return () => {};
+  const win = window as Window & {
+    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+    cancelIdleCallback?: (id: number) => void;
+  };
+  if (typeof win.requestIdleCallback === "function") {
+    const idleId = win.requestIdleCallback(task, { timeout: timeoutMs });
+    return () => win.cancelIdleCallback?.(idleId);
+  }
+  const timerId = window.setTimeout(task, Math.min(timeoutMs, 1100));
+  return () => window.clearTimeout(timerId);
+}
+
+function toTerritoryCatalogEntries(
+  bundle: Awaited<ReturnType<typeof loadWorldBoundariesQuick>>
+): TerritoryCatalogEntry[] {
+  return bundle.countries.features
+    .map((f) => ({
+      id: `territory-${f.properties.isoNumeric}`,
+      isoNumeric: f.properties.isoNumeric,
+      name: f.properties.name,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
 
 const DEFAULT_MAPPING: SonificationMapping = {
   density: 0.65,
@@ -164,22 +192,23 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
   const [territories, setTerritories] = useState<TerritoryCatalogEntry[]>([]);
   const hydratedRef = useRef(false);
 
-  // Load world countries catalog once for dropdown selectors and boundary hydration
+  // Load lightweight 110m countries catalog immediately, then upgrade to 50m on browser idle
   useEffect(() => {
     let active = true;
-    void loadWorldBoundaries().then((bundle) => {
+    let cancelIdle: (() => void) | null = null;
+    void loadWorldBoundariesQuick().then((bundle) => {
       if (!active) return;
-      const entries: TerritoryCatalogEntry[] = bundle.countries.features
-        .map((f) => ({
-          id: `territory-${f.properties.isoNumeric}`,
-          isoNumeric: f.properties.isoNumeric,
-          name: f.properties.name,
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name));
-      setTerritories(entries);
+      setTerritories((prev) => (prev.length > 0 ? prev : toTerritoryCatalogEntries(bundle)));
+      cancelIdle = scheduleWhenIdle(() => {
+        void loadWorldBoundariesDetailed().then((detailed) => {
+          if (!active) return;
+          setTerritories(toTerritoryCatalogEntries(detailed));
+        });
+      }, 1800);
     });
     return () => {
       active = false;
+      cancelIdle?.();
     };
   }, []);
 
@@ -361,19 +390,28 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
     };
   }, [selection.polygon, selection.bounds, selection.boundaryGeometry, activeLayer, timeIndex]);
 
-  // Sample diurnal 8-step atmospheric time series across the current boundary & active variable
+  const initialSeriesSettledRef = useRef(false);
+
+  // Sample diurnal 8-step atmospheric time series across the current boundary & active variable.
+  // Deferred until idle on initial boot so 8 raster decodes never contend with 3D globe painting.
   useEffect(() => {
     let cancelled = false;
     if (!selection.boundaryGeometry && selection.polygon.length < 3) return;
 
-    void samplePolygonSeries(activeLayer, selection.polygon, selection.boundaryGeometry).then((series) => {
-      if (!cancelled && series.length > 0) {
-        setRegionSeries(series);
-      }
-    });
+    const timeoutMs = initialSeriesSettledRef.current ? 240 : 1800;
+    const cancelIdle = scheduleWhenIdle(() => {
+      if (cancelled) return;
+      initialSeriesSettledRef.current = true;
+      void samplePolygonSeries(activeLayer, selection.polygon, selection.boundaryGeometry).then((series) => {
+        if (!cancelled && series.length > 0) {
+          setRegionSeries(series);
+        }
+      });
+    }, timeoutMs);
 
     return () => {
       cancelled = true;
+      cancelIdle();
     };
   }, [selection.polygon, selection.boundaryGeometry, activeLayer]);
 

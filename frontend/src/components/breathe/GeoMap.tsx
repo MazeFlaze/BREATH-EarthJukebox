@@ -5,9 +5,11 @@ import Image from "next/image";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Plus, Minus, Compass, Maximize2, Check, X } from "lucide-react";
+import { GlobeLoadingOverlay } from "@/components/breathe/GlobeLoadingOverlay";
 import { MapScanOverlay } from "@/components/breathe/MapScanOverlay";
 import { getLayerDefinition, observations } from "@/lib/breatheData";
 import { registerBreatheMapProtocol } from "@/lib/geosCfRaster";
+import { syncMapViewportLock } from "@/lib/mapInteractionLock";
 import {
   clampLat,
   computeBounds,
@@ -19,7 +21,8 @@ import {
 } from "@/lib/geoUtils";
 import {
   buildResolvedTerritory,
-  loadWorldBoundaries,
+  loadWorldBoundariesDetailed,
+  loadWorldBoundariesQuick,
   type CountryFeatureProperties,
   type WorldBoundaryBundle,
 } from "@/lib/worldBoundaries";
@@ -64,6 +67,7 @@ type GeoMapProps = {
   onToolComplete?: () => void;
   onCameraChange?: (center: GeoPoint, zoom: number) => void;
   onSelectStation?: (id: string, name: string, lat: number, lon: number) => void;
+  onScanLockChange?: (locked: boolean) => void;
   showGrid?: boolean;
   showLabels?: boolean;
   showControls?: boolean;
@@ -266,6 +270,7 @@ export function GeoMap({
   onToolComplete,
   onCameraChange,
   onSelectStation,
+  onScanLockChange,
   showGrid = false,
   showLabels = true,
   showControls = true,
@@ -280,16 +285,49 @@ export function GeoMap({
   const mapRef = useRef<maplibregl.Map | null>(null);
 
   const [mapReady, setMapReady] = useState(false);
+  const [globeVisualReady, setGlobeVisualReady] = useState(false);
   const [webglFallback, setWebglFallback] = useState(false);
   const [viewTick, setViewTick] = useState(0);
   const [containerSize, setContainerSize] = useState({ width: 800, height: 520 });
-  const [boundaries, setBoundaries] = useState<WorldBoundaryBundle | null>(null);
   const [hoveredCountryName, setHoveredCountryName] = useState<string | null>(null);
+  const [scanActive, setScanActive] = useState(false);
 
-  const hoveredIdRef = useRef<number | null>(null);
+  const isScanLocked = mode === "flat" && !compact && scanActive;
+  const isScanLockedRef = useRef(isScanLocked);
+  isScanLockedRef.current = isScanLocked;
+  const onScanLockChangeRef = useRef(onScanLockChange);
+  onScanLockChangeRef.current = onScanLockChange;
+
+  const handleScanActiveChange = useCallback((active: boolean) => {
+    setScanActive(active);
+  }, []);
+
+  useEffect(() => {
+    if (mode !== "flat" || compact) {
+      setScanActive(false);
+    }
+  }, [mode, compact]);
+
+  useEffect(() => {
+    onScanLockChangeRef.current?.(isScanLocked);
+  }, [isScanLocked]);
+
+  const hoveredTargetRef = useRef<{ source: string; id: number } | null>(null);
   const pointerDownPosRef = useRef<{ x: number; y: number } | null>(null);
+  const isPointerDraggingRef = useRef(false);
   const prevModeRef = useRef<"globe" | "flat">(mode);
   const styleReadyRef = useRef(false);
+  const quickBoundariesAppliedRef = useRef(false);
+  const detailedBoundariesAppliedRef = useRef(false);
+  const detailedBoundariesRequestedRef = useRef(false);
+  const quickBoundariesRef = useRef<WorldBoundaryBundle | null>(null);
+  const detailedBoundariesRef = useRef<WorldBoundaryBundle | null>(null);
+  const mapIdleReachedRef = useRef(false);
+  const maybeRevealGlobeRef = useRef<(() => void) | null>(null);
+  const triggerDetailedLoadRef = useRef<(() => void) | null>(null);
+  const pendingMoveRafRef = useRef<number | null>(null);
+  const pendingHoverRafRef = useRef<number | null>(null);
+  const latestHoverCandidateRef = useRef<{ source: string; id: number; name: string | null } | null>(null);
 
   const minFlatZoom = useMemo(
     () => (compact ? 1.0 : computeMinFlatZoom(containerSize.width, containerSize.height)),
@@ -372,6 +410,7 @@ export function GeoMap({
         setDraft([]);
         dragRef.current = null;
       } else if (
+        !isScanLockedRef.current &&
         (e.key === "Delete" || e.key === "Backspace") &&
         activeVertexIdx !== null &&
         onPolygonChange &&
@@ -462,6 +501,18 @@ export function GeoMap({
               tileSize: 256,
               maxzoom: 7,
             },
+            "countries-110m": {
+              type: "geojson",
+              data: EMPTY_FC,
+            },
+            "borders-110m": {
+              type: "geojson",
+              data: EMPTY_FC,
+            },
+            "coastlines-110m": {
+              type: "geojson",
+              data: EMPTY_FC,
+            },
             countries: {
               type: "geojson",
               data: EMPTY_FC,
@@ -507,9 +558,29 @@ export function GeoMap({
               },
             },
             {
+              id: "countries-110m-fill",
+              type: "fill",
+              source: "countries-110m",
+              paint: {
+                "fill-color": [
+                  "case",
+                  ["boolean", ["feature-state", "hover"], false],
+                  theme.landHover,
+                  theme.land,
+                ],
+                "fill-opacity": [
+                  "case",
+                  ["boolean", ["feature-state", "hover"], false],
+                  theme.satelliteOpacity > 0 ? 0.45 : Math.max(0.98, theme.landOpacity),
+                  theme.landOpacity,
+                ],
+              },
+            },
+            {
               id: "countries-fill",
               type: "fill",
               source: "countries",
+              minzoom: 3.0,
               paint: {
                 "fill-color": [
                   "case",
@@ -586,23 +657,49 @@ export function GeoMap({
               },
             },
             {
-              id: "coastlines-line",
+              id: "coastlines-110m-line",
               type: "line",
-              source: "coastlines",
+              source: "coastlines-110m",
               layout: { "line-join": "round", "line-cap": "round" },
               paint: {
                 "line-color": theme.coast,
                 "line-width": ["interpolate", ["linear"], ["zoom"], 1, 0.9, 5, 1.55],
+                "line-opacity": 1,
+              },
+            },
+            {
+              id: "coastlines-line",
+              type: "line",
+              source: "coastlines",
+              minzoom: 2.75,
+              layout: { "line-join": "round", "line-cap": "round" },
+              paint: {
+                "line-color": theme.coast,
+                "line-width": ["interpolate", ["linear"], ["zoom"], 1, 0.9, 5, 1.55],
+                "line-opacity": 0,
+              },
+            },
+            {
+              id: "borders-110m-line",
+              type: "line",
+              source: "borders-110m",
+              layout: { "line-join": "round", "line-cap": "round" },
+              paint: {
+                "line-color": theme.border,
+                "line-width": ["interpolate", ["linear"], ["zoom"], 1, 0.75, 5, 1.35],
+                "line-opacity": 1,
               },
             },
             {
               id: "borders-line",
               type: "line",
               source: "borders",
+              minzoom: 2.75,
               layout: { "line-join": "round", "line-cap": "round" },
               paint: {
                 "line-color": theme.border,
                 "line-width": ["interpolate", ["linear"], ["zoom"], 1, 0.75, 5, 1.35],
+                "line-opacity": 0,
               },
             },
             {
@@ -716,12 +813,27 @@ export function GeoMap({
 
     mapRef.current = map;
 
-    const handleMove = () => {
+    const flushViewTick = () => {
+      pendingMoveRafRef.current = null;
       setViewTick((t) => (t + 1) % 100000);
     };
 
+    const handleMove = () => {
+      if (map.getZoom() >= 2.5) {
+        triggerDetailedLoadRef.current?.();
+      }
+      if (pendingMoveRafRef.current !== null) return;
+      pendingMoveRafRef.current = window.requestAnimationFrame(flushViewTick);
+    };
+
     const handleMoveEnd = () => {
-      handleMove();
+      if (pendingMoveRafRef.current !== null) {
+        window.cancelAnimationFrame(pendingMoveRafRef.current);
+      }
+      flushViewTick();
+      if (map.getZoom() >= 2.5) {
+        triggerDetailedLoadRef.current?.();
+      }
       if (programmaticMoveRef.current) {
         programmaticMoveRef.current = false;
         return;
@@ -733,41 +845,122 @@ export function GeoMap({
       onCameraChangeRef.current?.(nextCenter, z);
     };
 
-    // Interactive country/territory hover highlighting & click selection
+    // Interactive country/territory hover highlighting & click selection across 110m/50m LOD layers
+    const territoryFillLayers = ["countries-110m-fill", "countries-fill"];
+
     const clearHover = () => {
-      if (hoveredIdRef.current !== null && map.getSource("countries")) {
+      const prev = hoveredTargetRef.current;
+      if (prev && map.getSource(prev.source)) {
         try {
-          map.setFeatureState({ source: "countries", id: hoveredIdRef.current }, { hover: false });
+          map.setFeatureState({ source: prev.source, id: prev.id }, { hover: false });
         } catch {
           // Source not loaded yet
         }
-        hoveredIdRef.current = null;
+        hoveredTargetRef.current = null;
       }
-      setHoveredCountryName(null);
+      setHoveredCountryName((cur) => (cur === null ? cur : null));
     };
 
-    map.on("mousemove", "countries-fill", (e) => {
-      if (toolRef.current !== "select" || !onSelectTerritoryRef.current) {
+    const flushHoverCandidate = () => {
+      pendingHoverRafRef.current = null;
+      if (isPointerDraggingRef.current || isScanLockedRef.current || toolRef.current !== "select" || !onSelectTerritoryRef.current) {
         clearHover();
+        map.getCanvas().style.cursor = "";
+        return;
+      }
+      const candidate = latestHoverCandidateRef.current;
+      if (!candidate) {
+        clearHover();
+        map.getCanvas().style.cursor = "";
+        return;
+      }
+      const prev = hoveredTargetRef.current;
+      if (prev && (prev.source !== candidate.source || prev.id !== candidate.id) && map.getSource(prev.source)) {
+        try {
+          map.setFeatureState({ source: prev.source, id: prev.id }, { hover: false });
+        } catch {
+          // Ignore unloaded source
+        }
+      }
+      hoveredTargetRef.current = { source: candidate.source, id: candidate.id };
+      try {
+        map.setFeatureState({ source: candidate.source, id: candidate.id }, { hover: true });
+      } catch {
+        // Ignore transient source swap
+      }
+      setHoveredCountryName((cur) => (cur === candidate.name ? cur : candidate.name));
+      map.getCanvas().style.cursor = "pointer";
+    };
+
+    map.on("dragstart", () => {
+      isPointerDraggingRef.current = true;
+      if (pendingHoverRafRef.current !== null) {
+        window.cancelAnimationFrame(pendingHoverRafRef.current);
+        pendingHoverRafRef.current = null;
+      }
+      latestHoverCandidateRef.current = null;
+      clearHover();
+      map.getCanvas().style.cursor = "";
+    });
+
+    map.on("dragend", () => {
+      isPointerDraggingRef.current = false;
+    });
+
+    map.on("mouseup", () => {
+      isPointerDraggingRef.current = false;
+    });
+
+    map.on("mousemove", territoryFillLayers, (e) => {
+      if (
+        isPointerDraggingRef.current ||
+        isScanLockedRef.current ||
+        toolRef.current !== "select" ||
+        !onSelectTerritoryRef.current
+      ) {
+        if (pendingHoverRafRef.current !== null) {
+          window.cancelAnimationFrame(pendingHoverRafRef.current);
+          pendingHoverRafRef.current = null;
+        }
+        clearHover();
+        map.getCanvas().style.cursor = "";
         return;
       }
       const feat = e.features?.[0];
       if (!feat || feat.id === undefined) {
-        clearHover();
+        latestHoverCandidateRef.current = null;
+        if (hoveredTargetRef.current !== null && pendingHoverRafRef.current === null) {
+          pendingHoverRafRef.current = window.requestAnimationFrame(flushHoverCandidate);
+        }
         return;
       }
+      const sourceName = feat.source || feat.layer?.source || "countries";
       const numericId = Number(feat.id);
-      if (hoveredIdRef.current !== null && hoveredIdRef.current !== numericId) {
-        map.setFeatureState({ source: "countries", id: hoveredIdRef.current }, { hover: false });
+      if (hoveredTargetRef.current?.source === sourceName && hoveredTargetRef.current.id === numericId) {
+        if (pendingHoverRafRef.current !== null) {
+          window.cancelAnimationFrame(pendingHoverRafRef.current);
+          pendingHoverRafRef.current = null;
+        }
+        latestHoverCandidateRef.current = null;
+        return;
       }
-      hoveredIdRef.current = numericId;
-      map.setFeatureState({ source: "countries", id: numericId }, { hover: true });
       const props = feat.properties as Partial<CountryFeatureProperties> | undefined;
-      setHoveredCountryName(props?.name ?? null);
-      map.getCanvas().style.cursor = "pointer";
+      latestHoverCandidateRef.current = {
+        source: sourceName,
+        id: numericId,
+        name: props?.name ?? null,
+      };
+      if (pendingHoverRafRef.current === null) {
+        pendingHoverRafRef.current = window.requestAnimationFrame(flushHoverCandidate);
+      }
     });
 
-    map.on("mouseleave", "countries-fill", () => {
+    map.on("mouseleave", territoryFillLayers, () => {
+      if (pendingHoverRafRef.current !== null) {
+        window.cancelAnimationFrame(pendingHoverRafRef.current);
+        pendingHoverRafRef.current = null;
+      }
+      latestHoverCandidateRef.current = null;
       clearHover();
       map.getCanvas().style.cursor = "";
     });
@@ -776,8 +969,8 @@ export function GeoMap({
       pointerDownPosRef.current = { x: e.point.x, y: e.point.y };
     });
 
-    map.on("click", "countries-fill", (e) => {
-      if (toolRef.current !== "select" || !onSelectTerritoryRef.current) return;
+    map.on("click", territoryFillLayers, (e) => {
+      if (isScanLockedRef.current || toolRef.current !== "select" || !onSelectTerritoryRef.current) return;
       const down = pointerDownPosRef.current;
       if (down && Math.hypot(e.point.x - down.x, e.point.y - down.y) > 5) return;
 
@@ -804,6 +997,19 @@ export function GeoMap({
       onSelectTerritoryRef.current(resolved);
     });
 
+    const maybeRevealGlobe = () => {
+      if (mapIdleReachedRef.current && quickBoundariesAppliedRef.current) {
+        setGlobeVisualReady(true);
+        triggerDetailedLoadRef.current?.();
+      }
+    };
+    maybeRevealGlobeRef.current = maybeRevealGlobe;
+
+    const fallbackRevealTimer = window.setTimeout(() => {
+      setGlobeVisualReady(true);
+      triggerDetailedLoadRef.current?.();
+    }, 1800);
+
     map.on("style.load", () => {
       styleReadyRef.current = true;
       setMapReady(true);
@@ -813,6 +1019,10 @@ export function GeoMap({
       styleReadyRef.current = true;
       setMapReady(true);
       handleMove();
+    });
+    map.once("idle", () => {
+      mapIdleReachedRef.current = true;
+      maybeRevealGlobe();
     });
     map.on("move", handleMove);
     map.on("zoom", handleMove);
@@ -825,6 +1035,18 @@ export function GeoMap({
     });
 
     return () => {
+      window.clearTimeout(fallbackRevealTimer);
+      if (pendingMoveRafRef.current !== null) {
+        window.cancelAnimationFrame(pendingMoveRafRef.current);
+        pendingMoveRafRef.current = null;
+      }
+      if (pendingHoverRafRef.current !== null) {
+        window.cancelAnimationFrame(pendingHoverRafRef.current);
+        pendingHoverRafRef.current = null;
+      }
+      maybeRevealGlobeRef.current = null;
+      mapIdleReachedRef.current = false;
+      isPointerDraggingRef.current = false;
       styleReadyRef.current = false;
       mapRef.current = null;
       map.remove();
@@ -832,41 +1054,155 @@ export function GeoMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Populate vector country polygons, borders, coastlines once worldBoundaries loads
+  // Populate lightweight 110m boundaries first, then lazily upgrade to 50m LOD after globe settles or zoom >= 2.5
   useEffect(() => {
     let active = true;
-    let cancelWait: (() => void) | null = null;
-    void loadWorldBoundaries().then((bundle) => {
+    let cancelQuickWait: (() => void) | null = null;
+    let cancelDetailedWait: (() => void) | null = null;
+    let cancelIdleSchedule: (() => void) | null = null;
+
+    const applyDetailedLod = () => {
+      if (!active || detailedBoundariesRequestedRef.current) return;
+      detailedBoundariesRequestedRef.current = true;
+
+      void loadWorldBoundariesDetailed().then((detailedBundle) => {
+        if (!active) return;
+        detailedBoundariesRef.current = detailedBundle;
+
+        const map = mapRef.current;
+        if (!map) return;
+        cancelDetailedWait = runWhenStyleReady(map, () => {
+          const currentMap = mapRef.current;
+          if (!currentMap) return;
+          const cSrc = currentMap.getSource("countries") as maplibregl.GeoJSONSource | undefined;
+          const bSrc = currentMap.getSource("borders") as maplibregl.GeoJSONSource | undefined;
+          const kSrc = currentMap.getSource("coastlines") as maplibregl.GeoJSONSource | undefined;
+          cSrc?.setData(detailedBundle.countries as GeoJSON.GeoJSON);
+          bSrc?.setData(detailedBundle.borders as GeoJSON.GeoJSON);
+          kSrc?.setData(detailedBundle.coastlines as GeoJSON.GeoJSON);
+          detailedBoundariesAppliedRef.current = true;
+
+          try {
+            if (currentMap.getLayer("countries-110m-fill")) {
+              currentMap.setLayerZoomRange("countries-110m-fill", 0, 3.0);
+            }
+            if (currentMap.getLayer("coastlines-110m-line")) {
+              currentMap.setLayerZoomRange("coastlines-110m-line", 0, 3.4);
+              currentMap.setPaintProperty("coastlines-110m-line", "line-opacity", [
+                "interpolate",
+                ["linear"],
+                ["zoom"],
+                2.75,
+                1,
+                3.3,
+                0,
+              ]);
+            }
+            if (currentMap.getLayer("coastlines-line")) {
+              currentMap.setPaintProperty("coastlines-line", "line-opacity", [
+                "interpolate",
+                ["linear"],
+                ["zoom"],
+                2.75,
+                0,
+                3.3,
+                1,
+              ]);
+            }
+            if (currentMap.getLayer("borders-110m-line")) {
+              currentMap.setLayerZoomRange("borders-110m-line", 0, 3.4);
+              currentMap.setPaintProperty("borders-110m-line", "line-opacity", [
+                "interpolate",
+                ["linear"],
+                ["zoom"],
+                2.75,
+                1,
+                3.3,
+                0,
+              ]);
+            }
+            if (currentMap.getLayer("borders-line")) {
+              currentMap.setPaintProperty("borders-line", "line-opacity", [
+                "interpolate",
+                ["linear"],
+                ["zoom"],
+                2.75,
+                0,
+                3.3,
+                1,
+              ]);
+            }
+          } catch {
+            // Ignore transient style teardown
+          }
+        });
+      });
+    };
+
+    triggerDetailedLoadRef.current = () => {
+      if (!active || detailedBoundariesRequestedRef.current) return;
+      const m = mapRef.current;
+      // Zoomed past detail threshold -> upgrade right away; otherwise wait for an idle window
+      if (m && m.getZoom() >= 2.5) {
+        cancelIdleSchedule?.();
+        applyDetailedLod();
+        return;
+      }
+      if (cancelIdleSchedule) return;
+      const win = window as Window & {
+        requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+        cancelIdleCallback?: (id: number) => void;
+      };
+      if (typeof win.requestIdleCallback === "function") {
+        const idleId = win.requestIdleCallback(() => applyDetailedLod(), { timeout: 1400 });
+        cancelIdleSchedule = () => win.cancelIdleCallback?.(idleId);
+      } else {
+        const tid = window.setTimeout(() => applyDetailedLod(), 900);
+        cancelIdleSchedule = () => window.clearTimeout(tid);
+      }
+    };
+
+    void loadWorldBoundariesQuick().then((quickBundle) => {
       if (!active) return;
-      setBoundaries(bundle);
+      quickBoundariesRef.current = quickBundle;
       const map = mapRef.current;
       if (!map) return;
-      cancelWait = runWhenStyleReady(map, () => {
+      cancelQuickWait = runWhenStyleReady(map, () => {
         const currentMap = mapRef.current;
         if (!currentMap) return;
-        const cSrc = currentMap.getSource("countries") as maplibregl.GeoJSONSource | undefined;
-        const bSrc = currentMap.getSource("borders") as maplibregl.GeoJSONSource | undefined;
-        const kSrc = currentMap.getSource("coastlines") as maplibregl.GeoJSONSource | undefined;
-        cSrc?.setData(bundle.countries as GeoJSON.GeoJSON);
-        bSrc?.setData(bundle.borders as GeoJSON.GeoJSON);
-        kSrc?.setData(bundle.coastlines as GeoJSON.GeoJSON);
+        const cSrc = currentMap.getSource("countries-110m") as maplibregl.GeoJSONSource | undefined;
+        const bSrc = currentMap.getSource("borders-110m") as maplibregl.GeoJSONSource | undefined;
+        const kSrc = currentMap.getSource("coastlines-110m") as maplibregl.GeoJSONSource | undefined;
+        cSrc?.setData(quickBundle.countries as GeoJSON.GeoJSON);
+        bSrc?.setData(quickBundle.borders as GeoJSON.GeoJSON);
+        kSrc?.setData(quickBundle.coastlines as GeoJSON.GeoJSON);
+        quickBoundariesAppliedRef.current = true;
         setViewTick((t) => (t + 1) % 100000);
+        maybeRevealGlobeRef.current?.();
       });
     });
+
     return () => {
       active = false;
-      cancelWait?.();
+      triggerDetailedLoadRef.current = null;
+      quickBoundariesAppliedRef.current = false;
+      detailedBoundariesAppliedRef.current = false;
+      detailedBoundariesRequestedRef.current = false;
+      cancelIdleSchedule?.();
+      cancelQuickWait?.();
+      cancelDetailedWait?.();
     };
   }, [runWhenStyleReady]);
 
-  // Keep GeoJSON cached feature lookup handy for unclipped polygon click extraction
-  const cachedCountriesLookup = useCallback(
-    (isoNumeric: string, name: string) =>
-      boundaries?.countries.features.find(
+  // Keep GeoJSON cached feature lookup handy via mutable refs for unclipped click extraction (preferring 50m)
+  const cachedCountriesLookup = useCallback((isoNumeric: string, name: string) => {
+    const source = detailedBoundariesRef.current ?? quickBoundariesRef.current;
+    return (
+      source?.countries.features.find(
         (f) => (isoNumeric && f.properties.isoNumeric === isoNumeric) || (name && f.properties.name === name)
-      ) ?? null,
-    [boundaries]
-  );
+      ) ?? null
+    );
+  }, []);
 
   // Sync authoritative GeoJSON territory boundary directly into WebGL source
   useEffect(() => {
@@ -909,14 +1245,15 @@ export function GeoMap({
         if (map.getLayer("earth-base-layer")) {
           map.setPaintProperty("earth-base-layer", "raster-opacity", activeTheme.satelliteOpacity);
         }
-        if (map.getLayer("countries-fill")) {
-          map.setPaintProperty("countries-fill", "fill-color", [
+        for (const fillLayerId of ["countries-110m-fill", "countries-fill"] as const) {
+          if (!map.getLayer(fillLayerId)) continue;
+          map.setPaintProperty(fillLayerId, "fill-color", [
             "case",
             ["boolean", ["feature-state", "hover"], false],
             activeTheme.landHover,
             activeTheme.land,
           ]);
-          map.setPaintProperty("countries-fill", "fill-opacity", [
+          map.setPaintProperty(fillLayerId, "fill-opacity", [
             "case",
             ["boolean", ["feature-state", "hover"], false],
             activeTheme.satelliteOpacity > 0 ? 0.45 : Math.max(0.98, activeTheme.landOpacity),
@@ -940,11 +1277,15 @@ export function GeoMap({
           map.setPaintProperty(id, "text-halo-color", activeTheme.placeHalo);
           map.setLayoutProperty(id, "visibility", showLabels ? "visible" : "none");
         }
-        if (map.getLayer("coastlines-line")) {
-          map.setPaintProperty("coastlines-line", "line-color", activeTheme.coast);
+        for (const coastId of ["coastlines-110m-line", "coastlines-line"] as const) {
+          if (map.getLayer(coastId)) {
+            map.setPaintProperty(coastId, "line-color", activeTheme.coast);
+          }
         }
-        if (map.getLayer("borders-line")) {
-          map.setPaintProperty("borders-line", "line-color", activeTheme.border);
+        for (const borderId of ["borders-110m-line", "borders-line"] as const) {
+          if (map.getLayer(borderId)) {
+            map.setPaintProperty(borderId, "line-color", activeTheme.border);
+          }
         }
         if (map.getLayer("selected-boundary-fill")) {
           map.setPaintProperty("selected-boundary-fill", "fill-color", activeTheme.selectedFill);
@@ -981,7 +1322,7 @@ export function GeoMap({
   // Keep flat minZoom synchronized dynamically when viewport resizes
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || mode !== "flat" || !isMapStyleReady(map)) return;
+    if (!map || mode !== "flat" || !isMapStyleReady(map) || isScanLockedRef.current) return;
     try {
       map.setMinZoom(minFlatZoom);
       if (map.getZoom() < minFlatZoom) {
@@ -1078,7 +1419,7 @@ export function GeoMap({
   // Fly/ease smoothly when external center/zoom props change programmatically
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !center) return;
+    if (!map || !center || isScanLockedRef.current) return;
     const prev = lastPropViewRef.current;
     const dist = prev
       ? Math.hypot(prev.lat - center.lat, prev.lon - center.lon) + Math.abs((prev.zoom ?? zoom) - zoom)
@@ -1117,14 +1458,32 @@ export function GeoMap({
     return runWhenStyleReady(map, syncLayers);
   }, [layer, timeIndex, layerVisible, layerOpacity, runWhenStyleReady]);
 
-  // Keep scroll zoom active while temporarily locking pan for active draw tools
+  // Lock all map panning/zooming/rotation/keyboard gestures during 2D scan; otherwise keep scroll zoom active
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    if (tool === "select") map.dragPan.enable();
-    else map.dragPan.disable();
-    map.scrollZoom.enable();
-  }, [tool]);
+
+    syncMapViewportLock(map, {
+      locked: isScanLocked,
+      allowDragPan: tool === "select",
+    });
+
+    if (isScanLocked) {
+      setDraft([]);
+      dragRef.current = null;
+      const prevHover = hoveredTargetRef.current;
+      if (prevHover && map.getSource(prevHover.source)) {
+        try {
+          map.setFeatureState({ source: prevHover.source, id: prevHover.id }, { hover: false });
+        } catch {
+          // Source not loaded yet
+        }
+        hoveredTargetRef.current = null;
+      }
+      setHoveredCountryName(null);
+      map.getCanvas().style.cursor = "";
+    }
+  }, [tool, isScanLocked, mapReady]);
 
   useEffect(() => {
     if (tool === "select") {
@@ -1157,7 +1516,7 @@ export function GeoMap({
   );
 
   const handleDrawPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (!onPolygonChange || tool === "select") return;
+    if (!onPolygonChange || tool === "select" || isScanLockedRef.current) return;
     if (e.button === 1 || e.altKey) return;
     const pt = unprojectPointer(e.clientX, e.clientY);
     if (!pt) return;
@@ -1188,7 +1547,7 @@ export function GeoMap({
 
   const handleDrawPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const drag = dragRef.current;
-    if (!drag || !onPolygonChange) return;
+    if (!drag || !onPolygonChange || isScanLockedRef.current) return;
     const pt = unprojectPointer(e.clientX, e.clientY);
     if (!pt) return;
 
@@ -1236,7 +1595,7 @@ export function GeoMap({
   };
 
   const handleVertexPointerDown = (index: number, e: React.PointerEvent<SVGCircleElement>) => {
-    if (!onPolygonChange) return;
+    if (!onPolygonChange || isScanLockedRef.current) return;
     e.stopPropagation();
     e.preventDefault();
     setActiveVertexIdx(index);
@@ -1250,7 +1609,7 @@ export function GeoMap({
   };
 
   const insertVertexAt = (afterIndex: number, midpoint: GeoPoint, e: React.MouseEvent) => {
-    if (!onPolygonChange) return;
+    if (!onPolygonChange || isScanLockedRef.current) return;
     e.stopPropagation();
     const next = [
       ...polygon.slice(0, afterIndex + 1),
@@ -1291,6 +1650,7 @@ export function GeoMap({
   const projectedMidpoints = useMemo(() => {
     if (
       !map ||
+      isScanLocked ||
       isTerritoryBoundary ||
       !onPolygonChange ||
       tool !== "select" ||
@@ -1315,7 +1675,7 @@ export function GeoMap({
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, isTerritoryBoundary, onPolygonChange, tool, polygon, activeZoom, viewTick, mode]);
+  }, [map, isScanLocked, isTerritoryBoundary, onPolygonChange, tool, polygon, activeZoom, viewTick, mode]);
 
   const projectedStations = useMemo(() => {
     if (!map || !showLabels || compact) return [];
@@ -1336,12 +1696,12 @@ export function GeoMap({
   }, [map, showLabels, compact, containerSize, activeZoom, viewTick, mode]);
 
   const scaleInfo = useMemo(() => niceScaleBar(activeCenter.lat, activeZoom), [activeCenter.lat, activeZoom]);
-  const isDrawingTool = Boolean(onPolygonChange && tool !== "select");
+  const isDrawingTool = Boolean(!isScanLocked && onPolygonChange && tool !== "select");
   const showDrawnPolygon = !isTerritoryBoundary || isDrawingTool || draft.length > 0;
 
   const handleZoomStep = (delta: number) => {
     const m = mapRef.current;
-    if (!m) return;
+    if (!m || isScanLockedRef.current) return;
     const floor = mode === "globe" ? 1.05 : minFlatZoom;
     m.easeTo({
       zoom: Math.max(floor, Math.min(9.0, m.getZoom() + delta)),
@@ -1351,7 +1711,7 @@ export function GeoMap({
 
   const handleFitRegion = () => {
     const m = mapRef.current;
-    if (!m) return;
+    if (!m || isScanLockedRef.current) return;
     if (boundaryGeometry || polygon.length >= 3) {
       const b = boundaryGeometry ? computePrimaryFocusBounds(boundaryGeometry).bounds : computeBounds(polygon);
       m.fitBounds(
@@ -1377,7 +1737,7 @@ export function GeoMap({
 
   const handleResetWorldView = () => {
     const m = mapRef.current;
-    if (!m) return;
+    if (!m || isScanLockedRef.current) return;
     if (mode === "flat") {
       m.easeTo({
         center: [14, 15],
@@ -1402,7 +1762,7 @@ export function GeoMap({
       ref={containerRef}
       className={`b-geo ${mode === "globe" ? "b-geo-globe" : "b-geo-flat"} ${
         theme.isLight ? "is-light-basemap" : "is-dark-basemap"
-      } ${className}`}
+      } ${isScanLocked ? "is-scan-locked" : ""} ${className}`}
       role="region"
       aria-label={
         label ??
@@ -1411,9 +1771,11 @@ export function GeoMap({
     >
       <div ref={mapCanvasHostRef} className="b-maplibre-host" />
 
-      {!mapReady && !webglFallback && (
-        <div className="b-map-loading">Loading map and air-quality layers…</div>
-      )}
+      <GlobeLoadingOverlay
+        visible={!globeVisualReady && !webglFallback}
+        isLightBasemap={theme.isLight}
+        label={mode === "globe" ? "Loading 3D Earth globe" : "Loading Earth territory map"}
+      />
 
       {webglFallback && (
         <div className="b-map-fallback">
@@ -1427,10 +1789,8 @@ export function GeoMap({
         </div>
       )}
 
-      {mode === "globe" && !compact && <div className="b-globe-orbit" aria-hidden="true" />}
-
       {/* Hover indicator when clicking a country/territory boundary is available */}
-      {hoveredCountryName && onSelectTerritory && tool === "select" && !compact && (
+      {!isScanLocked && hoveredCountryName && onSelectTerritory && tool === "select" && !compact && (
         <div className="b-territory-hover-pill" role="status" aria-live="polite">
           <span>{hoveredCountryName}</span>
           <small>Click to select territory</small>
@@ -1447,12 +1807,13 @@ export function GeoMap({
         onPointerMove={handleDrawPointerMove}
         onPointerUp={handleDrawPointerUp}
         onDoubleClick={() => {
-          if (tool === "polygon" && draft.length >= 3) {
+          if (!isScanLocked && tool === "polygon" && draft.length >= 3) {
             commitPolygon(draft);
           }
         }}
         style={{
-          pointerEvents: isDrawingTool || dragRef.current?.kind === "vertex" ? "all" : "none",
+          pointerEvents:
+            !isScanLocked && (isDrawingTool || dragRef.current?.kind === "vertex") ? "all" : "none",
         }}
       >
         {showDrawnPolygon && projectedPoly.length >= 3 && (
@@ -1499,6 +1860,7 @@ export function GeoMap({
           )}
 
         {!isTerritoryBoundary &&
+          !isScanLocked &&
           onPolygonChange &&
           tool === "select" &&
           polygon.map((pt, index) => {
@@ -1533,6 +1895,7 @@ export function GeoMap({
           mapping={mapping}
           isLightBasemap={theme.isLight}
           hideTrigger={isDrawingTool && draft.length > 0}
+          onActiveChange={handleScanActiveChange}
         />
       )}
 
@@ -1544,8 +1907,14 @@ export function GeoMap({
               type="button"
               className="b-station-dot"
               style={{ left: x, top: y }}
-              title={`${obs.coordinates.regionName} · ${obs.value.toFixed(1)} ${obs.unit}`}
+              aria-disabled={isScanLocked || undefined}
+              title={
+                isScanLocked
+                  ? `${obs.coordinates.regionName} (viewport locked during 2D scan)`
+                  : `${obs.coordinates.regionName} · ${obs.value.toFixed(1)} ${obs.unit}`
+              }
               onClick={() => {
+                if (isScanLocked) return;
                 if (onSelectStation) {
                   onSelectStation(obs.id, obs.coordinates.regionName, obs.coordinates.lat, obs.coordinates.lon);
                 } else {
@@ -1583,20 +1952,49 @@ export function GeoMap({
 
       {showControls && !compact && (
         <div className="b-map-nav-controls" role="group" aria-label="Map navigation controls">
-          <button type="button" onClick={() => handleZoomStep(0.8)} aria-label="Zoom in" title="Zoom in">
+          <button
+            type="button"
+            onClick={() => handleZoomStep(0.8)}
+            aria-label="Zoom in"
+            aria-disabled={isScanLocked || undefined}
+            title={isScanLocked ? "Viewport locked during 2D scan — close scan to zoom" : "Zoom in"}
+          >
             <Plus size={14} />
           </button>
-          <button type="button" onClick={() => handleZoomStep(-0.8)} aria-label="Zoom out" title="Zoom out">
+          <button
+            type="button"
+            onClick={() => handleZoomStep(-0.8)}
+            aria-label="Zoom out"
+            aria-disabled={isScanLocked || undefined}
+            title={isScanLocked ? "Viewport locked during 2D scan — close scan to zoom" : "Zoom out"}
+          >
             <Minus size={14} />
           </button>
-          <button type="button" onClick={handleFitRegion} aria-label="Fit active region" title="Fit active region">
+          <button
+            type="button"
+            onClick={handleFitRegion}
+            aria-label="Fit active region"
+            aria-disabled={isScanLocked || undefined}
+            title={
+              isScanLocked
+                ? "Viewport locked during 2D scan — close scan to fit region"
+                : "Fit active region"
+            }
+          >
             <Maximize2 size={13} />
           </button>
           <button
             type="button"
             onClick={handleResetWorldView}
             aria-label={mode === "flat" ? "Full flat world view" : "Center globe view"}
-            title={mode === "flat" ? "Full flat world view" : "Center globe view"}
+            aria-disabled={isScanLocked || undefined}
+            title={
+              isScanLocked
+                ? "Viewport locked during 2D scan — close scan to reset view"
+                : mode === "flat"
+                ? "Full flat world view"
+                : "Center globe view"
+            }
           >
             <Compass size={14} />
           </button>

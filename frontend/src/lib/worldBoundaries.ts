@@ -1,6 +1,10 @@
 import { feature, mesh } from "topojson-client";
 import type { GeometryCollection, Topology } from "topojson-specification";
 import {
+  splitGeometryAtAntimeridian,
+  splitMultiLineStringAtAntimeridian,
+} from "./antimeridian";
+import {
   computeBounds,
   computeCentroid,
   computeGeometryAreaKm2,
@@ -23,6 +27,7 @@ export interface WorldBoundaryBundle {
   borders: GeoJSON.Feature<GeoJSON.MultiLineString>;
   coastlines: GeoJSON.Feature<GeoJSON.MultiLineString>;
   labelAnchors: Array<{ text: string; lat: number; lon: number; minZoom: number }>;
+  resolution?: "110m" | "50m";
 }
 
 export interface ResolvedTerritorySelection {
@@ -37,8 +42,10 @@ export interface ResolvedTerritorySelection {
   zoom: number;
 }
 
-let bundlePromise: Promise<WorldBoundaryBundle> | null = null;
-let cachedBundle: WorldBoundaryBundle | null = null;
+let quickBundlePromise: Promise<WorldBoundaryBundle> | null = null;
+let cachedQuickBundle: WorldBoundaryBundle | null = null;
+let detailedBundlePromise: Promise<WorldBoundaryBundle> | null = null;
+let cachedDetailedBundle: WorldBoundaryBundle | null = null;
 
 function computeGeometrySummary(geom: GeoJSON.Geometry): {
   centerLat: number;
@@ -107,95 +114,151 @@ function computeGeometrySummary(geom: GeoJSON.Geometry): {
   return { centerLat: 0, centerLon: 0, bboxSpanDeg: 10 };
 }
 
-/**
- * Loads Natural Earth 50m world country & territory vector boundaries once via dynamic import.
- */
-export async function loadWorldBoundaries(): Promise<WorldBoundaryBundle> {
-  if (cachedBundle) return cachedBundle;
-  if (bundlePromise) return bundlePromise;
+type CountryAtlasTopology = Topology<{
+  countries: GeometryCollection<{ name?: string }>;
+}>;
 
-  bundlePromise = import("world-atlas/countries-50m.json").then((mod) => {
-    const topo = (mod.default ?? mod) as unknown as Topology<{
-      countries: GeometryCollection<{ name?: string }>;
-    }>;
+function isAntarcticaTerritory(rawId: unknown, properties: unknown): boolean {
+  const isoNumeric = String(rawId ?? "");
+  const rawName =
+    typeof properties === "object" && properties !== null && "name" in properties
+      ? (properties as { name?: unknown }).name
+      : undefined;
+  return isoNumeric === "010" || String(rawName ?? "") === "Antarctica";
+}
 
-    const rawCountries = feature(topo, topo.objects.countries);
-    const filteredFeatures: Array<GeoJSON.Feature<GeoJSON.Geometry, CountryFeatureProperties>> = [];
-    const labelAnchors: Array<{ text: string; lat: number; lon: number; minZoom: number }> = [];
+function buildBoundaryBundleFromTopo(
+  topo: CountryAtlasTopology,
+  resolution: "110m" | "50m"
+): WorldBoundaryBundle {
+  const rawCountries = feature(topo, topo.objects.countries);
+  const filteredFeatures: Array<GeoJSON.Feature<GeoJSON.Geometry, CountryFeatureProperties>> = [];
+  const labelAnchors: Array<{ text: string; lat: number; lon: number; minZoom: number }> = [];
 
-    rawCountries.features.forEach((feat, index) => {
-      const isoNumeric = String(feat.id ?? index);
-      const name = String(feat.properties?.name ?? `Territory ${isoNumeric}`);
-      // Exclude Antarctica shelf polygon from Mercator horizontal stretch
-      if (isoNumeric === "010" || name === "Antarctica") return;
-      if (!feat.geometry) return;
+  rawCountries.features.forEach((feat, index) => {
+    const isoNumeric = String(feat.id ?? index);
+    const name = String(feat.properties?.name ?? `Territory ${isoNumeric}`);
+    // Exclude Antarctica shelf polygon from Mercator horizontal stretch
+    if (isAntarcticaTerritory(feat.id ?? index, feat.properties)) return;
+    if (!feat.geometry) return;
 
-      const summary = computeGeometrySummary(feat.geometry);
-      const numericId = index + 1;
+    const geometry = splitGeometryAtAntimeridian(feat.geometry);
+    const summary = computeGeometrySummary(geometry);
+    const numericId = index + 1;
 
-      filteredFeatures.push({
-        type: "Feature",
-        id: numericId,
-        properties: {
-          isoNumeric,
-          name,
-          centerLat: summary.centerLat,
-          centerLon: summary.centerLon,
-          bboxSpanDeg: summary.bboxSpanDeg,
-        },
-        geometry: feat.geometry,
-      });
-
-      if (summary.bboxSpanDeg >= 1.2) {
-        const minZoom =
-          summary.bboxSpanDeg >= 18
-            ? 1.0
-            : summary.bboxSpanDeg >= 8
-            ? 2.2
-            : summary.bboxSpanDeg >= 3.2
-            ? 3.1
-            : 4.3;
-        labelAnchors.push({
-          text: name.toUpperCase(),
-          lat: summary.centerLat,
-          lon: summary.centerLon,
-          minZoom,
-        });
-      }
+    filteredFeatures.push({
+      type: "Feature",
+      id: numericId,
+      properties: {
+        isoNumeric,
+        name,
+        centerLat: summary.centerLat,
+        centerLon: summary.centerLon,
+        bboxSpanDeg: summary.bboxSpanDeg,
+      },
+      geometry,
     });
 
-    const countries: GeoJSON.FeatureCollection<GeoJSON.Geometry, CountryFeatureProperties> = {
-      type: "FeatureCollection",
-      features: filteredFeatures,
-    };
+    if (summary.bboxSpanDeg >= 1.2) {
+      const minZoom =
+        summary.bboxSpanDeg >= 18
+          ? 1.0
+          : summary.bboxSpanDeg >= 8
+          ? 2.2
+          : summary.bboxSpanDeg >= 3.2
+          ? 3.1
+          : 4.3;
+      labelAnchors.push({
+        text: name.toUpperCase(),
+        lat: summary.centerLat,
+        lon: summary.centerLon,
+        minZoom,
+      });
+    }
+  });
 
-    const borderMesh = mesh(topo, topo.objects.countries, (a, b) => a !== b);
-    const coastMesh = mesh(topo, topo.objects.countries, (a, b) => a === b);
+  const countries: GeoJSON.FeatureCollection<GeoJSON.Geometry, CountryFeatureProperties> = {
+    type: "FeatureCollection",
+    features: filteredFeatures,
+  };
 
-    const bundle: WorldBoundaryBundle = {
-      countries,
-      borders: {
-        type: "Feature",
-        properties: {},
-        geometry: borderMesh,
+  const nonAntarcticaCountries: GeometryCollection<{ name?: string }> = {
+    ...topo.objects.countries,
+    geometries: topo.objects.countries.geometries.filter(
+      (geom, index) => !isAntarcticaTerritory(geom.id ?? index, geom.properties)
+    ),
+  };
+
+  const borderMesh = mesh(topo, nonAntarcticaCountries, (a, b) => a !== b);
+  const coastMesh = mesh(topo, nonAntarcticaCountries, (a, b) => a === b);
+
+  return {
+    countries,
+    borders: {
+      type: "Feature",
+      properties: {},
+      geometry: {
+        ...borderMesh,
+        coordinates: splitMultiLineStringAtAntimeridian(borderMesh.coordinates),
       },
-      coastlines: {
-        type: "Feature",
-        properties: {},
-        geometry: coastMesh,
+    },
+    coastlines: {
+      type: "Feature",
+      properties: {},
+      geometry: {
+        ...coastMesh,
+        coordinates: splitMultiLineStringAtAntimeridian(coastMesh.coordinates),
       },
-      labelAnchors,
-    };
+    },
+    labelAnchors,
+    resolution,
+  };
+}
 
-    cachedBundle = bundle;
+/**
+ * Loads lightweight Natural Earth 110m country boundaries (~108 KB) for fast initial globe boot
+ * and low-zoom rendering (`zoom < 3`).
+ */
+export async function loadWorldBoundariesQuick(): Promise<WorldBoundaryBundle> {
+  if (cachedQuickBundle) return cachedQuickBundle;
+  if (quickBundlePromise) return quickBundlePromise;
+
+  quickBundlePromise = import("world-atlas/countries-110m.json").then((mod) => {
+    const topo = (mod.default ?? mod) as unknown as CountryAtlasTopology;
+    const bundle = buildBoundaryBundleFromTopo(topo, "110m");
+    cachedQuickBundle = bundle;
     return bundle;
   });
 
-  return bundlePromise;
+  return quickBundlePromise;
+}
+
+/**
+ * Loads full Natural Earth 50m world country & territory vector boundaries (~756 KB) once via dynamic import.
+ */
+export async function loadWorldBoundariesDetailed(): Promise<WorldBoundaryBundle> {
+  if (cachedDetailedBundle) return cachedDetailedBundle;
+  if (detailedBundlePromise) return detailedBundlePromise;
+
+  detailedBundlePromise = import("world-atlas/countries-50m.json").then((mod) => {
+    const topo = (mod.default ?? mod) as unknown as CountryAtlasTopology;
+    const bundle = buildBoundaryBundleFromTopo(topo, "50m");
+    cachedDetailedBundle = bundle;
+    return bundle;
+  });
+
+  return detailedBundlePromise;
+}
+
+/**
+ * Loads authoritative 50m world boundaries (default resolver contract for territory lookups and region sampling).
+ */
+export async function loadWorldBoundaries(): Promise<WorldBoundaryBundle> {
+  return loadWorldBoundariesDetailed();
 }
 
 export function getCachedWorldBoundaries(): WorldBoundaryBundle | null {
-  return cachedBundle;
+  return cachedDetailedBundle ?? cachedQuickBundle;
 }
 
 function isPolygonalGeometry(
