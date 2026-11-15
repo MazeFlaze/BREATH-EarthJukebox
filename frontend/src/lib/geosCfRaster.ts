@@ -365,153 +365,424 @@ function edgeFeatherAlpha(lat: number, lon: number, bounds: GeoBounds): number {
   return Math.max(0, Math.min(1, Math.min(dx, dy)));
 }
 
+const TILE_SIZE = 256;
+const TILE_WORKER_COUNT = 2;
+const MAX_TILE_CACHE_ENTRIES = 224;
+
+type TileCacheEntry = Uint8ClampedArray | "EMPTY";
+
+interface WorkerPendingJob {
+  resolve: (value: TileCacheEntry) => void;
+  reject: (reason: Error) => void;
+}
+
+interface WorkerSlot {
+  worker: Worker;
+  pending: Map<number, WorkerPendingJob>;
+}
+
+const tileLruCache = new Map<string, TileCacheEntry>();
+const inFlightTileJobs = new Map<string, Promise<TileCacheEntry>>();
+let tileWorkerSlots: WorkerSlot[] | null = null;
+let tileWorkerDisabled = false;
+let nextTileJobId = 1;
 let registeredProtocol = false;
+
+function getCachedTile(key: string): TileCacheEntry | undefined {
+  const existing = tileLruCache.get(key);
+  if (existing === undefined) return undefined;
+  tileLruCache.delete(key);
+  tileLruCache.set(key, existing);
+  return existing;
+}
+
+function setCachedTile(key: string, entry: TileCacheEntry): void {
+  if (tileLruCache.has(key)) {
+    tileLruCache.delete(key);
+  } else if (tileLruCache.size >= MAX_TILE_CACHE_ENTRIES) {
+    const oldestKey = tileLruCache.keys().next().value;
+    if (oldestKey !== undefined) tileLruCache.delete(oldestKey);
+  }
+  tileLruCache.set(key, entry);
+}
+
+function getTileWorkerPool(): WorkerSlot[] | null {
+  if (tileWorkerDisabled || typeof window === "undefined") return null;
+  if (
+    typeof Worker === "undefined" ||
+    typeof OffscreenCanvas === "undefined" ||
+    typeof createImageBitmap !== "function"
+  ) {
+    tileWorkerDisabled = true;
+    return null;
+  }
+  if (tileWorkerSlots) return tileWorkerSlots;
+
+  const slots: WorkerSlot[] = [];
+  try {
+    for (let i = 0; i < TILE_WORKER_COUNT; i += 1) {
+      const worker = new Worker("/workers/raster-tile-worker.js");
+      const pending = new Map<number, WorkerPendingJob>();
+      const slot: WorkerSlot = { worker, pending };
+
+      worker.onmessage = (event: MessageEvent<{
+        id: number;
+        status: "ok" | "error";
+        empty?: boolean;
+        buffer?: ArrayBuffer;
+        message?: string;
+      }>) => {
+        const payload = event.data;
+        if (!payload || typeof payload.id !== "number") return;
+        const job = slot.pending.get(payload.id);
+        if (!job) return;
+        slot.pending.delete(payload.id);
+
+        if (payload.status === "error") {
+          job.reject(new Error(payload.message ?? "Tile worker failed"));
+          return;
+        }
+        if (payload.empty || !payload.buffer) {
+          job.resolve("EMPTY");
+          return;
+        }
+        job.resolve(new Uint8ClampedArray(payload.buffer));
+      };
+
+      worker.onerror = () => {
+        tileWorkerDisabled = true;
+        for (const s of slots) {
+          for (const [, job] of s.pending) {
+            job.reject(new Error("Tile worker crashed"));
+          }
+          s.pending.clear();
+          s.worker.terminate();
+        }
+        tileWorkerSlots = null;
+      };
+
+      worker.postMessage({
+        type: "init",
+        expandedLuts: EXPANDED_LUTS,
+        lutBins: LUT_BINS,
+        bgMaskRgb: BG_MASK_RGB,
+        regionCrops: REGION_CROPS,
+      });
+
+      slots.push(slot);
+    }
+
+    tileWorkerSlots = slots;
+    return tileWorkerSlots;
+  } catch {
+    tileWorkerDisabled = true;
+    for (const slot of slots) {
+      slot.worker.terminate();
+    }
+    tileWorkerSlots = null;
+    return null;
+  }
+}
+
+function pickWorkerSlot(slots: WorkerSlot[], kind: "base" | "overlay"): WorkerSlot {
+  if (slots.length === 1) return slots[0];
+  const preferredIdx = kind === "base" ? 0 : 1;
+  const preferred = slots[preferredIdx];
+  const alternate = slots[1 - preferredIdx];
+  if (preferred.pending.size >= 6 && alternate.pending.size < preferred.pending.size) {
+    return alternate;
+  }
+  return preferred;
+}
+
+function dispatchWorkerTile(
+  kind: "base" | "overlay",
+  payload: { z: number; x: number; y: number; cmap?: ColormapName; imageUrl?: string }
+): Promise<TileCacheEntry> | null {
+  const slots = getTileWorkerPool();
+  if (!slots) return null;
+
+  const slot = pickWorkerSlot(slots, kind);
+  const id = nextTileJobId;
+  nextTileJobId += 1;
+
+  return new Promise<TileCacheEntry>((resolve, reject) => {
+    slot.pending.set(id, { resolve, reject });
+    try {
+      slot.worker.postMessage({
+        type: "renderTile",
+        id,
+        kind,
+        ...payload,
+      });
+    } catch (err) {
+      slot.pending.delete(id);
+      reject(err instanceof Error ? err : new Error("Worker dispatch error"));
+    }
+  });
+}
+
+async function renderTileOnMainThread(
+  kind: string,
+  parts: string[]
+): Promise<TileCacheEntry> {
+  const out = new Uint8ClampedArray(TILE_SIZE * TILE_SIZE * 4);
+
+  if (kind === "base") {
+    const z = Number(parts[2] ?? 0);
+    const x = Number(parts[3] ?? 0);
+    const y = Number(parts[4] ?? 0);
+    const scale = 2 ** z;
+
+    const [baseRaster, cloudsRaster, northVnRaster, ninhThuanRaster] = await Promise.all([
+      loadRasterPixels("/images/earth-blue-marble.png", 1600),
+      loadRasterPixels("/images/earth-clouds-hires.jpg", 1024),
+      z >= 3 ? loadRasterPixels(REGION_CROPS.northernVietnam.url, 1024) : Promise.resolve(null),
+      z >= 4 ? loadRasterPixels(REGION_CROPS.ninhThuan.url, 1024) : Promise.resolve(null),
+    ]);
+
+    if (!baseRaster) {
+      for (let i = 0; i < out.length; i += 4) {
+        out[i] = 22;
+        out[i + 1] = 45;
+        out[i + 2] = 44;
+        out[i + 3] = 255;
+      }
+      return out;
+    }
+
+    const lons = new Float64Array(TILE_SIZE);
+    for (let px = 0; px < TILE_SIZE; px += 1) {
+      const normX = (x + (px + 0.5) / TILE_SIZE) / scale;
+      lons[px] = normX * 360 - 180;
+    }
+    for (let py = 0; py < TILE_SIZE; py += 1) {
+      const normY = (y + (py + 0.5) / TILE_SIZE) / scale;
+      const n = Math.PI * (1 - 2 * normY);
+      const lat = (Math.atan(Math.sinh(n)) * 180) / Math.PI;
+      const rowOffset = py * TILE_SIZE * 4;
+      for (let px = 0; px < TILE_SIZE; px += 1) {
+        const lon = lons[px];
+        let [r, g, b] = sampleEquirectangularPixel(baseRaster, lat, lon);
+
+        if (northVnRaster) {
+          const crop = sampleBoundsImage(northVnRaster, lat, lon, REGION_CROPS.northernVietnam.bounds);
+          if (crop) {
+            const a = edgeFeatherAlpha(lat, lon, REGION_CROPS.northernVietnam.bounds) * 0.72;
+            r = Math.round(r * (1 - a) + crop[0] * a);
+            g = Math.round(g * (1 - a) + crop[1] * a);
+            b = Math.round(b * (1 - a) + crop[2] * a);
+          }
+        }
+        if (ninhThuanRaster) {
+          const crop = sampleBoundsImage(ninhThuanRaster, lat, lon, REGION_CROPS.ninhThuan.bounds);
+          if (crop) {
+            const a = edgeFeatherAlpha(lat, lon, REGION_CROPS.ninhThuan.bounds) * 0.78;
+            r = Math.round(r * (1 - a) + crop[0] * a);
+            g = Math.round(g * (1 - a) + crop[1] * a);
+            b = Math.round(b * (1 - a) + crop[2] * a);
+          }
+        }
+        if (cloudsRaster) {
+          const cl = sampleEquirectangularPixel(cloudsRaster, lat, lon);
+          const cloudMix = (cl[0] / 255) * 0.14;
+          r = Math.min(255, Math.round(r + 220 * cloudMix));
+          g = Math.min(255, Math.round(g + 225 * cloudMix));
+          b = Math.min(255, Math.round(b + 220 * cloudMix));
+        }
+
+        const dst = rowOffset + px * 4;
+        out[dst] = Math.round(r * 0.88 + 8);
+        out[dst + 1] = Math.round(g * 0.92 + 12);
+        out[dst + 2] = Math.round(b * 0.86 + 10);
+        out[dst + 3] = 255;
+      }
+    }
+    return out;
+  }
+
+  if (kind === "overlay") {
+    const layerKey = (parts[1] ?? "PM25_RH35") as LayerKey;
+    const timeIndex = Number(parts[2] ?? 0);
+    const z = Number(parts[3] ?? 0);
+    const x = Number(parts[4] ?? 0);
+    const y = Number(parts[5] ?? 0);
+    const layer = getLayerDefinition(layerKey);
+    const frame = frameFor(layerKey, timeIndex);
+    if (!layer.available || !frame) return "EMPTY";
+
+    const original = await loadRasterPixels(frame.imageUrl, 1280);
+    const raster = original ? displayRaster(original) : null;
+    if (!raster) return "EMPTY";
+
+    const scale = 2 ** z;
+    const lons = new Float64Array(TILE_SIZE);
+    for (let px = 0; px < TILE_SIZE; px += 1) {
+      lons[px] = ((x + (px + 0.5) / TILE_SIZE) / scale) * 360 - 180;
+    }
+    let hasOpaque = false;
+    for (let py = 0; py < TILE_SIZE; py += 1) {
+      const normY = (y + (py + 0.5) / TILE_SIZE) / scale;
+      const lat = (Math.atan(Math.sinh(Math.PI * (1 - 2 * normY))) * 180) / Math.PI;
+      const rowOffset = py * TILE_SIZE * 4;
+      for (let px = 0; px < TILE_SIZE; px += 1) {
+        const [r, g, b, a] = sampleEquirectangularSmooth(raster, lat, lons[px]);
+        const t = decodeColormapNormalized(r, g, b, a, layer.cmap);
+        const dst = rowOffset + px * 4;
+        if (t !== null) {
+          const [or, og, ob, oa] = intensityToEditorialRgba(t);
+          if (oa > 0) {
+            hasOpaque = true;
+            out[dst] = or;
+            out[dst + 1] = og;
+            out[dst + 2] = ob;
+            out[dst + 3] = oa;
+          }
+        }
+      }
+    }
+    return hasOpaque ? out : "EMPTY";
+  }
+
+  return "EMPTY";
+}
+
+async function tileEntryToProtocolResponse(
+  entry: TileCacheEntry
+): Promise<maplibregl.GetResourceResponse<maplibregl.AddProtocolResponseData>> {
+  if (entry === "EMPTY") {
+    return { data: new ArrayBuffer(0) };
+  }
+
+  if (typeof ImageData !== "undefined") {
+    const imgData = new ImageData(new Uint8ClampedArray(entry), TILE_SIZE, TILE_SIZE);
+    if (typeof createImageBitmap === "function") {
+      try {
+        const bitmap = await createImageBitmap(imgData);
+        return { data: bitmap };
+      } catch {
+        // Fall through to canvas PNG encoding
+      }
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = TILE_SIZE;
+    canvas.height = TILE_SIZE;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return { data: new ArrayBuffer(0) };
+    ctx.putImageData(imgData, 0, 0);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!blob) return { data: new ArrayBuffer(0) };
+    return { data: await blob.arrayBuffer() };
+  }
+
+  return { data: new ArrayBuffer(0) };
+}
+
+function waitWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | null> {
+  if (signal.aborted) return Promise.resolve(null);
+  return new Promise<T | null>((resolve, reject) => {
+    const onAbort = () => resolve(null);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (val) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(val);
+      },
+      (err) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      }
+    );
+  });
+}
 
 /**
  * Registers custom `breathe-earth://` raster protocol in MapLibre GL v6
- * to reproject bundled EPSG:4326 Earth & GEOS-CF maps cleanly into Web Mercator tiles.
+ * to reproject bundled EPSG:4326 Earth & GEOS-CF maps cleanly into Web Mercator tiles
+ * off the UI thread with an LRU tile cache.
  */
 export function registerBreatheMapProtocol(ml: typeof maplibregl) {
   if (registeredProtocol || typeof document === "undefined") return;
   registeredProtocol = true;
 
+  // Warm the worker pool up front so base + overlay tile jobs start without worker boot latency
+  getTileWorkerPool();
+
   ml.addProtocol(
     "breathe-earth",
     async (params: maplibregl.RequestParameters, abortController: AbortController) => {
-    const cleanUrl = params.url.replace("breathe-earth://", "");
-    const parts = cleanUrl.split("/");
-    const kind = parts[0];
-
-    const size = 256;
-    const canvas = document.createElement("canvas");
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return { data: new ArrayBuffer(0) };
-
-    const imgData = ctx.createImageData(size, size);
-    const out = imgData.data;
-
-    if (kind === "base") {
-      const z = Number(parts[2] ?? 0);
-      const x = Number(parts[3] ?? 0);
-      const y = Number(parts[4] ?? 0);
-      const scale = 2 ** z;
-
-      const [baseRaster, cloudsRaster, northVnRaster, ninhThuanRaster] = await Promise.all([
-        loadRasterPixels("/images/earth-blue-marble.png", 1600),
-        loadRasterPixels("/images/earth-clouds-hires.jpg", 1024),
-        z >= 3 ? loadRasterPixels(REGION_CROPS.northernVietnam.url, 1024) : Promise.resolve(null),
-        z >= 4 ? loadRasterPixels(REGION_CROPS.ninhThuan.url, 1024) : Promise.resolve(null),
-      ]);
-
       if (abortController.signal.aborted) {
         return { data: new ArrayBuffer(0) };
       }
 
-      if (!baseRaster) {
-        ctx.fillStyle = "#162d2c";
-        ctx.fillRect(0, 0, size, size);
-      } else {
-        const lons = new Float64Array(size);
-        for (let px = 0; px < size; px += 1) {
-          const normX = (x + (px + 0.5) / size) / scale;
-          lons[px] = normX * 360 - 180;
-        }
-        for (let py = 0; py < size; py += 1) {
-          const normY = (y + (py + 0.5) / size) / scale;
-          const n = Math.PI * (1 - 2 * normY);
-          const lat = (Math.atan(Math.sinh(n)) * 180) / Math.PI;
-          const rowOffset = py * size * 4;
-          for (let px = 0; px < size; px += 1) {
-            const lon = lons[px];
-            let [r, g, b] = sampleEquirectangularPixel(baseRaster, lat, lon);
-
-            if (northVnRaster) {
-              const crop = sampleBoundsImage(northVnRaster, lat, lon, REGION_CROPS.northernVietnam.bounds);
-              if (crop) {
-                const a = edgeFeatherAlpha(lat, lon, REGION_CROPS.northernVietnam.bounds) * 0.72;
-                r = Math.round(r * (1 - a) + crop[0] * a);
-                g = Math.round(g * (1 - a) + crop[1] * a);
-                b = Math.round(b * (1 - a) + crop[2] * a);
-              }
-            }
-            if (ninhThuanRaster) {
-              const crop = sampleBoundsImage(ninhThuanRaster, lat, lon, REGION_CROPS.ninhThuan.bounds);
-              if (crop) {
-                const a = edgeFeatherAlpha(lat, lon, REGION_CROPS.ninhThuan.bounds) * 0.78;
-                r = Math.round(r * (1 - a) + crop[0] * a);
-                g = Math.round(g * (1 - a) + crop[1] * a);
-                b = Math.round(b * (1 - a) + crop[2] * a);
-              }
-            }
-            if (cloudsRaster) {
-              const cl = sampleEquirectangularPixel(cloudsRaster, lat, lon);
-              const cloudMix = (cl[0] / 255) * 0.14;
-              r = Math.min(255, Math.round(r + 220 * cloudMix));
-              g = Math.min(255, Math.round(g + 225 * cloudMix));
-              b = Math.min(255, Math.round(b + 220 * cloudMix));
-            }
-
-            // Gentle editorial sage-charcoal atmospheric grade so ocean matches approved screenshots
-            const dst = rowOffset + px * 4;
-            out[dst] = Math.round(r * 0.88 + 8);
-            out[dst + 1] = Math.round(g * 0.92 + 12);
-            out[dst + 2] = Math.round(b * 0.86 + 10);
-            out[dst + 3] = 255;
-          }
-        }
-        ctx.putImageData(imgData, 0, 0);
+      const cleanUrl = params.url.replace("breathe-earth://", "");
+      const cached = getCachedTile(cleanUrl);
+      if (cached !== undefined) {
+        return tileEntryToProtocolResponse(cached);
       }
-    } else if (kind === "overlay") {
-      const layerKey = (parts[1] ?? "PM25_RH35") as LayerKey;
-      const timeIndex = Number(parts[2] ?? 0);
-      const z = Number(parts[3] ?? 0);
-      const x = Number(parts[4] ?? 0);
-      const y = Number(parts[5] ?? 0);
 
-      const layer = getLayerDefinition(layerKey);
-      const frame = frameFor(layerKey, timeIndex);
-      if (layer.available && frame) {
-        const original = await loadRasterPixels(frame.imageUrl, 1280);
-        const raster = original ? displayRaster(original) : null;
-        if (abortController.signal.aborted) {
-          return { data: new ArrayBuffer(0) };
-        }
-        if (raster) {
-          const scale = 2 ** z;
-          const lons = new Float64Array(size);
-          for (let px = 0; px < size; px += 1) {
-            lons[px] = ((x + (px + 0.5) / size) / scale) * 360 - 180;
-          }
-          for (let py = 0; py < size; py += 1) {
-            const normY = (y + (py + 0.5) / size) / scale;
-            const lat = (Math.atan(Math.sinh(Math.PI * (1 - 2 * normY))) * 180) / Math.PI;
-            const rowOffset = py * size * 4;
-            for (let px = 0; px < size; px += 1) {
-              const [r, g, b, a] = sampleEquirectangularSmooth(raster, lat, lons[px]);
-              const t = decodeColormapNormalized(r, g, b, a, layer.cmap);
-              const dst = rowOffset + px * 4;
-              if (t === null) {
-                out[dst + 3] = 0;
-              } else {
-                const [or, og, ob, oa] = intensityToEditorialRgba(t);
-                out[dst] = or;
-                out[dst + 1] = og;
-                out[dst + 2] = ob;
-                out[dst + 3] = oa;
-              }
+      let tileJob = inFlightTileJobs.get(cleanUrl);
+      if (!tileJob) {
+        const parts = cleanUrl.split("/");
+        const kind = parts[0];
+
+        const computeTile = async (): Promise<TileCacheEntry> => {
+          let workerPromise: Promise<TileCacheEntry> | null = null;
+          if (kind === "base") {
+            workerPromise = dispatchWorkerTile("base", {
+              z: Number(parts[2] ?? 0),
+              x: Number(parts[3] ?? 0),
+              y: Number(parts[4] ?? 0),
+            });
+          } else if (kind === "overlay") {
+            const layerKey = (parts[1] ?? "PM25_RH35") as LayerKey;
+            const timeIndex = Number(parts[2] ?? 0);
+            const layer = getLayerDefinition(layerKey);
+            const frame = frameFor(layerKey, timeIndex);
+            if (!layer.available || !frame) {
+              setCachedTile(cleanUrl, "EMPTY");
+              return "EMPTY";
             }
+            workerPromise = dispatchWorkerTile("overlay", {
+              z: Number(parts[3] ?? 0),
+              x: Number(parts[4] ?? 0),
+              y: Number(parts[5] ?? 0),
+              cmap: layer.cmap,
+              imageUrl: frame.imageUrl,
+            });
+          } else {
+            return "EMPTY";
           }
-          ctx.putImageData(imgData, 0, 0);
-        }
+
+          let entry: TileCacheEntry;
+          if (workerPromise) {
+            try {
+              entry = await workerPromise;
+            } catch {
+              entry = await renderTileOnMainThread(kind, parts);
+            }
+          } else {
+            entry = await renderTileOnMainThread(kind, parts);
+          }
+
+          setCachedTile(cleanUrl, entry);
+          return entry;
+        };
+
+        tileJob = computeTile().finally(() => {
+          inFlightTileJobs.delete(cleanUrl);
+        });
+        inFlightTileJobs.set(cleanUrl, tileJob);
       }
+
+      const resolved = await waitWithAbort(tileJob, abortController.signal);
+      if (!resolved || abortController.signal.aborted) {
+        return { data: new ArrayBuffer(0) };
+      }
+
+      return tileEntryToProtocolResponse(resolved);
     }
-
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
-    if (!blob) return { data: new ArrayBuffer(0) };
-    return { data: await blob.arrayBuffer() };
-  });
+  );
 }
 
 /**

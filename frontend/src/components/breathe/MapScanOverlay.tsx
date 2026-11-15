@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type * as maplibregl from "maplibre-gl";
-import { AudioLines, Globe2, MapPin, Pause, Play, RotateCcw, X } from "lucide-react";
+import { AudioLines, Globe2, Lock, MapPin, Pause, Play, RotateCcw, X } from "lucide-react";
 import { getLayerDefinition } from "@/lib/breatheData";
 import { loadLayerRaster } from "@/lib/geosCfRaster";
 import {
@@ -37,6 +37,7 @@ export interface MapScanOverlayProps {
   mapping: SonificationMapping;
   isLightBasemap: boolean;
   hideTrigger?: boolean;
+  onActiveChange?: (active: boolean) => void;
 }
 
 type ScanStatus = "idle" | "playing" | "paused";
@@ -73,6 +74,7 @@ export function MapScanOverlay({
   mapping,
   isLightBasemap,
   hideTrigger = false,
+  onActiveChange,
 }: MapScanOverlayProps) {
   const layerDef = getLayerDefinition(layer);
   const hasRegion = Boolean(boundaryGeometry || polygon.length >= 3);
@@ -104,6 +106,8 @@ export function MapScanOverlay({
   isLightRef.current = isLightBasemap;
   const statusRef = useRef(status);
   statusRef.current = status;
+  const onActiveChangeRef = useRef(onActiveChange);
+  onActiveChangeRef.current = onActiveChange;
 
   const effectiveScope: ScanScope = scope === "region" && hasRegion ? "region" : "viewport";
 
@@ -120,9 +124,14 @@ export function MapScanOverlay({
       ripplesRef.current = [];
       progressRef.current = 0;
       lastColRef.current = -1;
+      onActiveChangeRef.current?.(false);
       setStatus("idle");
     }
   }, [layerDef.available, status]);
+
+  useEffect(() => {
+    onActiveChangeRef.current?.(status !== "idle");
+  }, [status]);
 
   // Cleanup on unmount (e.g. leaving 2D mode back to 3D globe or navigating routes)
   useEffect(() => {
@@ -132,6 +141,7 @@ export function MapScanOverlay({
         rafRef.current = null;
       }
       sonificationService.endSpatialScan();
+      onActiveChangeRef.current?.(false);
     };
   }, []);
 
@@ -444,6 +454,7 @@ export function MapScanOverlay({
     progressRef.current = 0;
     lastColRef.current = -1;
     ripplesRef.current = [];
+    onActiveChangeRef.current?.(true);
     setStatus("playing");
   };
 
@@ -470,6 +481,7 @@ export function MapScanOverlay({
     progressRef.current = 0;
     lastColRef.current = -1;
     ripplesRef.current = [];
+    onActiveChangeRef.current?.(false);
     setStatus("idle");
   };
 
@@ -565,12 +577,20 @@ export function MapScanOverlay({
                 <span>{readout.lonLabel}</span>
               </div>
 
+              <span
+                className="b-scan-lock-badge"
+                title="2D viewport locked during scan — close scan to pan or zoom"
+              >
+                <Lock size={10} aria-hidden="true" />
+                <span>2D Locked</span>
+              </span>
+
               <button
                 type="button"
                 className="b-scan-icon-btn"
                 onClick={handleClose}
-                aria-label="Close 2D scan sonifier"
-                title="Stop and close 2D scan"
+                aria-label="Close 2D scan sonifier and unlock map"
+                title="Stop scan and unlock 2D map"
               >
                 <X size={13} />
               </button>
