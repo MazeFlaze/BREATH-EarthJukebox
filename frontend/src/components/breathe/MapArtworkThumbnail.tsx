@@ -8,6 +8,8 @@ interface MapArtworkThumbnailProps {
   center: GeoPoint;
   zoom: number;
   polygon: GeoPoint[];
+  boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon;
+  territoryCode?: string;
   variable: LayerKey;
   timeIndex: number;
   seriesPreview?: number[];
@@ -21,6 +23,8 @@ export function MapArtworkThumbnail({
   center,
   zoom,
   polygon,
+  boundaryGeometry,
+  territoryCode,
   variable,
   timeIndex,
   seriesPreview,
@@ -39,6 +43,8 @@ export function MapArtworkThumbnail({
       center,
       zoom,
       polygon,
+      boundaryGeometry,
+      territoryCode,
       variable,
       timeIndex,
       seriesPreview,
@@ -48,7 +54,7 @@ export function MapArtworkThumbnail({
     return () => {
       cancelled = true;
     };
-  }, [center, zoom, polygon, variable, timeIndex, seriesPreview]);
+  }, [center, zoom, polygon, boundaryGeometry, territoryCode, variable, timeIndex, seriesPreview]);
 
   return (
     <div

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, Compass, Pause, Play, Sparkles, Volume2 } from "lucide-react";
 import { GeoMap } from "@/components/breathe/GeoMap";
@@ -8,7 +8,11 @@ import { MapArtworkThumbnail } from "@/components/breathe/MapArtworkThumbnail";
 import { DataBadge, Eyebrow, SiteFooter } from "@/components/breathe/SharedUI";
 import { Waveform } from "@/components/breathe/SoundVisuals";
 import { useSonification } from "@/hooks/useSonification";
-import { observations, regions } from "@/lib/breatheData";
+import { observations, presetSelections } from "@/lib/breatheData";
+import {
+  resolveTerritoryByCodeOrName,
+  type ResolvedTerritorySelection,
+} from "@/lib/worldBoundaries";
 import type { AudioCompositionSpec } from "@/types/breathe";
 
 const RHYTHM_PREVIEW_HEIGHTS = [24, 38, 62, 48, 86, 68, 42, 74, 96, 56, 36, 80, 64, 44, 52, 30];
@@ -16,6 +20,17 @@ const RHYTHM_PREVIEW_HEIGHTS = [24, 38, 62, 48, 86, 68, 42, 74, 96, 56, 36, 80, 
 export default function OverviewPage() {
   const { playbackState, clock, playComposition, pause } = useSonification();
   const hanoi = observations[0];
+  const [vietnamTerritory, setVietnamTerritory] = useState<ResolvedTerritorySelection | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void resolveTerritoryByCodeOrName("704", "vietnam", "Vietnam").then((resolved) => {
+      if (active && resolved) setVietnamTerritory(resolved);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const sampleSpec = useMemo<AudioCompositionSpec>(
     () => ({
@@ -80,13 +95,15 @@ export default function OverviewPage() {
             basemapMode="territories"
             layer="PM25_RH35"
             timeIndex={0}
-            center={{ lat: hanoi.coordinates.lat, lon: hanoi.coordinates.lon }}
+            center={{ lat: 15.98, lon: 105.8 }}
             zoom={2.35}
-            polygon={regions.northernVietnam}
+            polygon={vietnamTerritory?.polygon ?? presetSelections[0].polygon}
+            boundaryGeometry={vietnamTerritory?.boundaryGeometry ?? null}
+            boundaryKind="territory"
             showLabels={false}
             showControls={false}
             compact
-            label="Interactive 3D Earth showing Northern Vietnam NASA GEOS-CF PM2.5"
+            label="Interactive 3D Earth showing Vietnam national boundary and NASA GEOS-CF PM2.5"
           />
 
           <div className="b-hero-data-card">
@@ -136,13 +153,15 @@ export default function OverviewPage() {
             </div>
             <div className="b-entry-earth" aria-hidden="true">
               <MapArtworkThumbnail
-                center={{ lat: hanoi.coordinates.lat, lon: hanoi.coordinates.lon }}
+                center={{ lat: 15.98, lon: 105.8 }}
                 zoom={3.6}
-                polygon={regions.northernVietnam}
+                polygon={vietnamTerritory?.polygon ?? presetSelections[0].polygon}
+                boundaryGeometry={vietnamTerritory?.boundaryGeometry}
+                territoryCode="704"
                 variable="PM25_RH35"
                 timeIndex={0}
                 seriesPreview={sampleSpec.series}
-                title="Northern Vietnam"
+                title="Vietnam"
                 height={186}
               />
             </div>

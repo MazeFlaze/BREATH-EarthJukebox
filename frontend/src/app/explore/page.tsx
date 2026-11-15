@@ -26,6 +26,7 @@ import {
   LayerList,
   Legend,
   SiteFooter,
+  TerritorySelect,
   Timeline,
 } from "@/components/breathe/SharedUI";
 import { AudioTransport, RhythmGrid } from "@/components/breathe/SoundVisuals";
@@ -33,7 +34,6 @@ import { useBreathe } from "@/context/BreatheContext";
 import {
   formatUtc,
   getLayerDefinition,
-  presetSelections,
   searchablePlaces,
   timeSlots,
 } from "@/lib/breatheData";
@@ -42,6 +42,7 @@ import { formatBounds, parseCoordinateQuery, zoomForBounds } from "@/lib/geoUtil
 export default function ExplorePage() {
   const {
     selection,
+    territories,
     activeLayer,
     basemapMode,
     layerVisible,
@@ -50,6 +51,7 @@ export default function ExplorePage() {
     showLabels,
     timeIndex,
     camera,
+    mapping,
     regionStats,
     canUndoPolygon,
     canRedoPolygon,
@@ -63,6 +65,8 @@ export default function ExplorePage() {
     setCamera,
     flyTo,
     selectPreset,
+    selectTerritory,
+    selectTerritoryByCode,
     setPolygon,
     undoPolygon,
     redoPolygon,
@@ -90,24 +94,54 @@ export default function ExplorePage() {
 
   const matchingPlaces = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return searchablePlaces.slice(0, 6);
-    return searchablePlaces
-      .filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          p.aliases.some((alias) => alias.includes(q))
-      )
-      .slice(0, 6);
-  }, [query]);
+    const matchedPlaces = !q
+      ? searchablePlaces.slice(0, 6)
+      : searchablePlaces.filter(
+          (p) =>
+            p.name.toLowerCase().includes(q) ||
+            p.aliases.some((alias) => alias.includes(q))
+        );
 
-  const handleSelectPlace = (placeId: string) => {
-    const found = searchablePlaces.find((p) => p.id === placeId);
-    if (!found) return;
+    const placeItems = matchedPlaces.slice(0, 6).map((p) => ({
+      id: p.id,
+      name: p.name,
+      subtitle: `${p.point.lat.toFixed(2)}°, ${p.point.lon.toFixed(2)}°`,
+      kind: "place" as const,
+      place: p,
+    }));
+
+    if (!q) return placeItems;
+
+    const coveredCodes = new Set(
+      matchedPlaces.map((p) => p.territoryCode).filter((c): c is string => Boolean(c))
+    );
+    const territoryItems = territories
+      .filter((t) => !coveredCodes.has(t.isoNumeric) && t.name.toLowerCase().includes(q))
+      .slice(0, Math.max(0, 8 - placeItems.length))
+      .map((t) => ({
+        id: t.id,
+        name: t.name,
+        subtitle: "National border",
+        kind: "territory" as const,
+        isoNumeric: t.isoNumeric,
+      }));
+
+    return [...placeItems, ...territoryItems];
+  }, [query, territories]);
+
+  const handleSelectSuggestion = (item: (typeof matchingPlaces)[number]) => {
     setSearchError(null);
     setSearchFocused(false);
-    setQuery(found.name);
+    setQuery(item.name);
+    if (item.kind === "territory") {
+      void selectTerritoryByCode(item.isoNumeric);
+      return;
+    }
+    const found = item.place;
     if (found.selectionId) {
       selectPreset(found.selectionId);
+    } else if (found.territoryCode) {
+      void selectTerritoryByCode(found.territoryCode);
     } else {
       flyTo(found.point, found.zoom);
     }
@@ -124,15 +158,33 @@ export default function ExplorePage() {
     }
     const q = query.trim().toLowerCase();
     if (!q) return;
-    const exact = searchablePlaces.find(
+    const placeMatch = searchablePlaces.find(
       (p) =>
+        p.name.toLowerCase() === q ||
         p.name.toLowerCase().includes(q) ||
         p.aliases.some((alias) => alias.includes(q))
     );
-    if (exact) {
-      handleSelectPlace(exact.id);
+    if (placeMatch) {
+      setSearchError(null);
+      setSearchFocused(false);
+      setQuery(placeMatch.name);
+      if (placeMatch.selectionId) selectPreset(placeMatch.selectionId);
+      else if (placeMatch.territoryCode) void selectTerritoryByCode(placeMatch.territoryCode);
+      else flyTo(placeMatch.point, placeMatch.zoom);
+      return;
+    }
+    const territoryMatch =
+      territories.find((t) => t.name.toLowerCase() === q) ??
+      territories.find((t) => t.name.toLowerCase().includes(q));
+    if (territoryMatch) {
+      setSearchError(null);
+      setSearchFocused(false);
+      setQuery(territoryMatch.name);
+      void selectTerritoryByCode(territoryMatch.isoNumeric);
     } else {
-      setSearchError("Try a supported city (Hanoi, Tokyo, New York) or coordinates like 21.02, 105.85.");
+      setSearchError(
+        "Try a country (Vietnam, Germany, Brazil), city (Hanoi, Tokyo), or coordinates like 21.02, 105.85."
+      );
     }
   };
 
@@ -178,22 +230,20 @@ export default function ExplorePage() {
 
           {searchFocused && matchingPlaces.length > 0 && (
             <div className="b-search-suggestions" role="listbox" aria-label="Suggested Earth locations">
-              {matchingPlaces.map((place) => (
+              {matchingPlaces.map((item) => (
                 <button
-                  key={place.id}
+                  key={item.id}
                   type="button"
                   role="option"
                   aria-selected={false}
                   className="b-search-suggestion"
                   onMouseDown={(e) => {
                     e.preventDefault();
-                    handleSelectPlace(place.id);
+                    handleSelectSuggestion(item);
                   }}
                 >
-                  <span>{place.name}</span>
-                  <small>
-                    {place.point.lat.toFixed(2)}°, {place.point.lon.toFixed(2)}°
-                  </small>
+                  <span>{item.name}</span>
+                  <small>{item.subtitle}</small>
                 </button>
               ))}
             </div>
@@ -219,7 +269,7 @@ export default function ExplorePage() {
               setCamera({
                 mode: "flat",
                 center: selection.center,
-                zoom: Math.max(3.4, zoomForBounds(selection.bounds) - 0.35),
+                zoom: Math.max(2.0, zoomForBounds(selection.bounds) - 0.35),
               })
             }
           >
@@ -231,14 +281,20 @@ export default function ExplorePage() {
           type="button"
           className="b-icon-button b-global-button"
           onClick={() =>
-            setCamera({
-              mode: "globe",
-              center: { lat: 21.1, lon: 105.75 },
-              zoom: 2.35,
-            })
+            mapMode === "flat"
+              ? setCamera({
+                  mode: "flat",
+                  center: { lat: 15, lon: 14 },
+                  zoom: 0.95,
+                })
+              : setCamera({
+                  mode: "globe",
+                  center: { lat: 21.1, lon: 105.75 },
+                  zoom: 2.35,
+                })
           }
-          title="Reset global view"
-          aria-label="Reset global overview"
+          title={mapMode === "flat" ? "Full flat world view" : "Reset global view"}
+          aria-label={mapMode === "flat" ? "Full flat world view" : "Reset global overview"}
         >
           <Compass size={16} />
         </button>
@@ -336,23 +392,13 @@ export default function ExplorePage() {
             </div>
 
             <label className="b-field-label">
-              Curated region
-              <select
-                className="b-text-input"
-                value={presetSelections.some((p) => p.id === selection.id) ? selection.id : "custom"}
-                onChange={(e) => {
-                  if (e.target.value !== "custom") selectPreset(e.target.value);
-                }}
-              >
-                {presetSelections.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-                {!presetSelections.some((p) => p.id === selection.id) && (
-                  <option value="custom">{selection.name}</option>
-                )}
-              </select>
+              Territory / region
+              <TerritorySelect
+                selection={selection}
+                territories={territories}
+                onSelectValue={selectPreset}
+                ariaLabel="Select territory or region"
+              />
             </label>
 
             <Link href="/explore/region" className="b-tool-link">
@@ -399,11 +445,13 @@ export default function ExplorePage() {
           )}
 
           <div className="b-map-selection">
-            <span>ACTIVE TERRITORY</span>
+            <span>
+              {selection.boundaryKind === "drawn" ? "DRAWN BOUNDARY" : "NATIONAL BORDER"}
+            </span>
             <strong>{selection.name}</strong>
             <small className="b-tabular">
               {selection.areaKm2 > 0
-                ? `Approx. ${selection.areaKm2.toLocaleString()} km²`
+                ? `${selection.boundaryKind === "drawn" ? "Custom polygon" : "Admin-0"} · ${selection.areaKm2.toLocaleString()} km²`
                 : "Click a country or draw a region"}
             </small>
           </div>
@@ -421,11 +469,10 @@ export default function ExplorePage() {
               setCamera({ center: nextCenter, zoom: nextZoom })
             }
             polygon={selection.polygon}
+            boundaryGeometry={selection.boundaryGeometry}
+            boundaryKind={selection.boundaryKind}
             onPolygonChange={(pts) => setPolygon(pts, "Custom drawn region", "custom")}
-            onSelectTerritory={(territory) => {
-              setPolygon(territory.polygon, territory.name, "custom");
-              flyTo(territory.center, territory.zoom);
-            }}
+            onSelectTerritory={selectTerritory}
             tool={drawTool}
             onToolComplete={() => setDrawTool("select")}
             onSelectStation={(_id, name, lat, lon) => {
@@ -435,6 +482,7 @@ export default function ExplorePage() {
             showGrid={showGrid}
             showLabels={showLabels}
             showScaleBar
+            mapping={mapping}
           />
 
           <Legend layerKey={activeLayer} />

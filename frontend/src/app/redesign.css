@@ -639,11 +639,11 @@
   font-size: 10px;
 }
 
-/* Territory hover prompt overlay */
+/* Territory hover prompt overlay (sits cleanly above bottom-left Legend, leaving top-left free for 2D Scan) */
 .b-territory-hover-pill {
   position: absolute;
   left: 16px;
-  top: 16px;
+  bottom: 108px;
   z-index: 6;
   display: inline-flex;
   align-items: center;
@@ -654,6 +654,11 @@
   background: rgba(255, 254, 250, 0.95);
   box-shadow: 0 4px 14px rgba(20, 44, 44, 0.1);
   pointer-events: none;
+}
+
+.b-explore-map .b-map-hint {
+  top: 62px;
+  z-index: 5;
 }
 
 .b-territory-hover-pill span {
@@ -668,6 +673,14 @@
 }
 
 /* Light vs Dark Basemap Adaptive Contrast */
+.b-geo.b-geo-flat.is-light-basemap {
+  background: #dbe6e1;
+}
+
+.b-geo.b-geo-flat.is-dark-basemap {
+  background: #0f201f;
+}
+
 .b-geo.is-light-basemap {
   background: #dbe6e1;
 }
@@ -922,6 +935,176 @@
   color: var(--muted);
 }
 
+/* 2D Map Playhead Scan Sonification Canvas & Compact Dock */
+.b-scan-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.b-scan-dock-wrap {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 7;
+  max-width: calc(100% - 210px);
+  pointer-events: auto;
+}
+
+.b-studio-map .b-scan-dock-wrap {
+  max-width: calc(100% - 32px);
+}
+
+.b-region-map .b-scan-dock-wrap {
+  top: 20px;
+  left: 102px;
+  max-width: calc(100% - 300px);
+}
+
+.b-scan-trigger-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 13px;
+  border-radius: 10px;
+  border: 1px solid #c5d3ca;
+  background: rgba(255, 254, 250, 0.96);
+  color: var(--green-dark);
+  font-size: 11.5px;
+  font-weight: 700;
+  box-shadow: 0 4px 14px rgba(20, 44, 44, 0.1);
+  cursor: pointer;
+  transition: background-color 0.14s ease, border-color 0.14s ease, transform 0.12s ease;
+}
+
+.b-scan-trigger-btn:hover:not(:disabled) {
+  background: var(--green-soft);
+  border-color: var(--green);
+}
+
+.b-scan-trigger-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.b-scan-bar {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 11px;
+  border: 1px solid #c5d3ca;
+  background: rgba(255, 254, 250, 0.96);
+  box-shadow: 0 6px 22px rgba(20, 44, 44, 0.14);
+}
+
+.b-scan-play-btn {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--green);
+  color: #fffefa;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  flex: none;
+  transition: background-color 0.12s ease;
+}
+
+.b-scan-play-btn:hover {
+  background: var(--green-dark);
+}
+
+.b-scan-icon-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  flex: none;
+}
+
+.b-scan-icon-btn:hover {
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+.b-scan-pill-group {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #edf1eb;
+  gap: 2px;
+}
+
+.b-scan-pill-group button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #4c5d57;
+  font-size: 10.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.b-scan-pill-group button.is-active {
+  background: var(--paper);
+  color: var(--green-dark);
+  box-shadow: 0 1px 2px rgba(20, 44, 44, 0.1);
+}
+
+.b-scan-speed-btn {
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: #f5f7f3;
+  color: var(--ink);
+  font-size: 10.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.b-scan-speed-btn:hover {
+  background: var(--green-soft);
+  border-color: var(--sage);
+}
+
+.b-scan-readout {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0 6px;
+  border-left: 1px solid var(--line);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.b-scan-readout strong {
+  color: var(--green-dark);
+  font-weight: 750;
+}
+
+.b-scan-readout span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
 @media (max-width: 960px) {
   .b-explore-toolbar {
     flex-wrap: wrap;
@@ -932,5 +1115,9 @@
   }
   .b-sound-telemetry {
     grid-template-columns: 1fr;
+  }
+  .b-scan-dock-wrap,
+  .b-region-map .b-scan-dock-wrap {
+    max-width: calc(100% - 32px);
   }
 }

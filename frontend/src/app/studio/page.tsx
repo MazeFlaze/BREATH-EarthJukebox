@@ -20,6 +20,7 @@ import {
   DataBadge,
   Legend,
   SiteFooter,
+  TerritorySelect,
   Timeline,
 } from "@/components/breathe/SharedUI";
 import {
@@ -31,7 +32,7 @@ import {
 } from "@/components/breathe/SoundVisuals";
 import { useBreathe } from "@/context/BreatheContext";
 import { useAudioClock } from "@/hooks/useSonification";
-import { getLayerDefinition, layers, presetSelections, timeSlots } from "@/lib/breatheData";
+import { getLayerDefinition, layers, timeSlots } from "@/lib/breatheData";
 import { zoomForBounds } from "@/lib/geoUtils";
 import type { BreatheProjectFile } from "@/types/breathe";
 import type { OscillatorWaveform } from "@/types/audio";
@@ -42,6 +43,7 @@ const WAVEFORMS: OscillatorWaveform[] = ["sine", "triangle", "sawtooth", "square
 export default function StudioPage() {
   const {
     selection,
+    territories,
     activeLayer,
     basemapMode,
     layerVisible,
@@ -55,8 +57,8 @@ export default function StudioPage() {
     setLayerOpacity,
     setTimeIndex,
     selectPreset,
+    selectTerritory,
     setPolygon,
-    flyTo,
     updateMapping,
     saveWorkToGallery,
     exportProjectFile,
@@ -196,23 +198,13 @@ export default function StudioPage() {
                 <ArrowRight size={14} />
               </Link>
 
-              <select
+              <TerritorySelect
                 className="b-studio-select"
-                aria-label="Active geographic region"
-                value={presetSelections.some((p) => p.id === selection.id) ? selection.id : "custom"}
-                onChange={(e) => {
-                  if (e.target.value !== "custom") selectPreset(e.target.value);
-                }}
-              >
-                {presetSelections.map((preset) => (
-                  <option key={preset.id} value={preset.id}>
-                    {preset.name}
-                  </option>
-                ))}
-                {!presetSelections.some((p) => p.id === selection.id) && (
-                  <option value="custom">{selection.name}</option>
-                )}
-              </select>
+                ariaLabel="Active geographic region"
+                selection={selection}
+                territories={territories}
+                onSelectValue={selectPreset}
+              />
 
               <BasemapSwitcher compact value={basemapMode} onChange={setBasemapMode} />
 
@@ -275,16 +267,16 @@ export default function StudioPage() {
                 layerOpacity={layerOpacity}
                 timeIndex={timeIndex}
                 center={selection.center}
-                zoom={Math.max(3.6, fittedZoom)}
+                zoom={Math.max(1.4, fittedZoom)}
                 polygon={selection.polygon}
+                boundaryGeometry={selection.boundaryGeometry}
+                boundaryKind={selection.boundaryKind}
                 onPolygonChange={(pts) => setPolygon(pts, "Edited Studio region", "custom")}
-                onSelectTerritory={(territory) => {
-                  setPolygon(territory.polygon, territory.name, "custom");
-                  flyTo(territory.center, Math.max(3.2, territory.zoom));
-                }}
+                onSelectTerritory={selectTerritory}
                 tool="select"
                 showLabels
                 showScaleBar
+                mapping={mapping}
               />
 
               <Legend layerKey={activeLayer} />

@@ -29,9 +29,29 @@ export interface LayerDefinition {
   methodologyNote: string;
 }
 
+export type SelectionBoundaryKind = "territory" | "drawn";
+
+export interface TerritorySelectionPayload {
+  id: string;
+  territoryCode: string;
+  name: string;
+  boundaryGeometry: GeoJSON.Polygon | GeoJSON.MultiPolygon;
+  polygon: GeoPoint[];
+  bounds: GeoBounds;
+  areaKm2: number;
+  center: GeoPoint;
+  zoom: number;
+}
+
 export interface GeographicSelection {
   id: string;
   name: string;
+  /** Full GeoJSON Polygon/MultiPolygon boundary when backed by an authoritative border. */
+  boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon;
+  /** Distinguishes territory border selections from custom drawn regions. */
+  boundaryKind?: SelectionBoundaryKind;
+  /** ISO 3166-1 numeric code (e.g. "704") used to resolve full borders across reloads cleanly. */
+  territoryCode?: string;
   polygon: GeoPoint[];
   bounds: GeoBounds;
   areaKm2: number;
@@ -97,6 +117,8 @@ export interface GalleryWork {
   creator: string;
   regionId: string;
   region: string;
+  territoryCode?: string;
+  boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon;
   polygon: GeoPoint[];
   center: GeoPoint;
   zoom: number;
@@ -122,6 +144,7 @@ export interface GalleryWork {
 export interface BreatheProjectFile {
   version: "2.0";
   name: string;
+  territoryCode?: string;
   polygon: GeoPoint[];
   layer: LayerKey;
   timeIndex: number;
@@ -130,4 +153,8 @@ export interface BreatheProjectFile {
   waveform: OscillatorWaveform;
   mappings: number[];
 }
+
+export type ScanScope = "viewport" | "region";
+
+export type ScanSpeedMultiplier = 0.5 | 1 | 2;
 

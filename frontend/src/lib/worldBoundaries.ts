@@ -1,6 +1,13 @@
 import { feature, mesh } from "topojson-client";
 import type { GeometryCollection, Topology } from "topojson-specification";
-import { computeBounds, computeCentroid, simplifyPolygon, zoomForBounds } from "./geoUtils";
+import {
+  computeBounds,
+  computeCentroid,
+  computeGeometryAreaKm2,
+  computePrimaryFocusBounds,
+  simplifyPolygon,
+  zoomForBounds,
+} from "./geoUtils";
 import type { GeoBounds, GeoPoint } from "@/types/breathe";
 
 export interface CountryFeatureProperties {
@@ -16,6 +23,18 @@ export interface WorldBoundaryBundle {
   borders: GeoJSON.Feature<GeoJSON.MultiLineString>;
   coastlines: GeoJSON.Feature<GeoJSON.MultiLineString>;
   labelAnchors: Array<{ text: string; lat: number; lon: number; minZoom: number }>;
+}
+
+export interface ResolvedTerritorySelection {
+  id: string;
+  territoryCode: string;
+  name: string;
+  boundaryGeometry: GeoJSON.Polygon | GeoJSON.MultiPolygon;
+  polygon: GeoPoint[];
+  bounds: GeoBounds;
+  areaKm2: number;
+  center: GeoPoint;
+  zoom: number;
 }
 
 let bundlePromise: Promise<WorldBoundaryBundle> | null = null;
@@ -179,43 +198,118 @@ export function getCachedWorldBoundaries(): WorldBoundaryBundle | null {
   return cachedBundle;
 }
 
+function isPolygonalGeometry(
+  geom: GeoJSON.Geometry | null | undefined
+): geom is GeoJSON.Polygon | GeoJSON.MultiPolygon {
+  return Boolean(geom && (geom.type === "Polygon" || geom.type === "MultiPolygon"));
+}
+
+const TERRITORY_NAME_ALIASES: Record<string, string> = {
+  usa: "United States of America",
+  us: "United States of America",
+  "united states": "United States of America",
+  uk: "United Kingdom",
+  britain: "United Kingdom",
+  "great britain": "United Kingdom",
+  "viet nam": "Vietnam",
+  russia: "Russia",
+  "south korea": "South Korea",
+};
+
 /**
- * Extracts a country or territory feature's primary mainland boundary as an editable GeoPoint ring.
+ * Finds a territory feature inside a loaded WorldBoundaryBundle by ISO numeric code or country name/alias.
+ */
+export function findTerritoryFeature(
+  bundle: WorldBoundaryBundle,
+  codeOrName: string
+): GeoJSON.Feature<GeoJSON.Geometry, CountryFeatureProperties> | null {
+  const trimmed = codeOrName.trim();
+  if (!trimmed) return null;
+  const normalizedCode = trimmed.replace(/^territory-/, "");
+  const lower = trimmed.toLowerCase();
+  const aliased = TERRITORY_NAME_ALIASES[lower]?.toLowerCase() ?? lower;
+
+  return (
+    bundle.countries.features.find((f) => f.properties.isoNumeric === normalizedCode) ??
+    bundle.countries.features.find((f) => f.properties.name.toLowerCase() === aliased) ??
+    bundle.countries.features.find((f) => f.properties.name.toLowerCase() === lower) ??
+    null
+  );
+}
+
+/**
+ * Resolves a country/territory GeoJSON feature cleanly into an unclipped full-border selection,
+ * preserving MultiPolygon islands/holes while computing mainland-focused viewport bounds.
+ */
+export function buildResolvedTerritory(
+  feat: GeoJSON.Feature<GeoJSON.Geometry, Partial<CountryFeatureProperties> | GeoJSON.GeoJsonProperties>,
+  idOverride?: string,
+  nameOverride?: string
+): ResolvedTerritorySelection | null {
+  if (!isPolygonalGeometry(feat.geometry)) return null;
+
+  const isoNumeric = String(feat.properties?.isoNumeric ?? feat.id ?? "unknown");
+  const name = nameOverride ?? String(feat.properties?.name ?? `Territory ${isoNumeric}`);
+  const focus = computePrimaryFocusBounds(feat.geometry);
+  const areaKm2 = computeGeometryAreaKm2(feat.geometry);
+  const zoom = zoomForBounds(focus.bounds);
+
+  // Build simplified mainland ring only as an editable-sketch / legacy fallback
+  const rawMainRing: GeoPoint[] = focus.primaryRing
+    .slice(0, focus.primaryRing.length > 1 ? -1 : focus.primaryRing.length)
+    .map(([lon, lat]) => ({
+      lat: Number(Math.max(-84, Math.min(84, lat)).toFixed(4)),
+      lon: Number(lon.toFixed(4)),
+    }));
+  let fallback = simplifyPolygon(rawMainRing, 0.08);
+  if (fallback.length > 48) {
+    fallback = simplifyPolygon(rawMainRing, 0.18);
+  }
+  if (fallback.length > 48) {
+    const step = Math.ceil(fallback.length / 40);
+    fallback = fallback.filter((_, idx) => idx % step === 0);
+  }
+  if (fallback.length < 3) {
+    fallback = rawMainRing.slice(0, Math.min(24, rawMainRing.length));
+  }
+
+  return {
+    id: idOverride ?? `territory-${isoNumeric}`,
+    territoryCode: isoNumeric,
+    name,
+    boundaryGeometry: feat.geometry,
+    polygon: fallback,
+    bounds: focus.bounds,
+    areaKm2,
+    center: focus.center,
+    zoom,
+  };
+}
+
+/**
+ * Resolves a country/territory by ISO numeric code or name (loading worldBoundaries on demand).
+ */
+export async function resolveTerritoryByCodeOrName(
+  codeOrName: string,
+  idOverride?: string,
+  nameOverride?: string
+): Promise<ResolvedTerritorySelection | null> {
+  const bundle = await loadWorldBoundaries();
+  const feat = findTerritoryFeature(bundle, codeOrName);
+  if (!feat) return null;
+  return buildResolvedTerritory(feat, idOverride, nameOverride);
+}
+
+/**
+ * Extracts a simplified editable GeoPoint ring from a GeoJSON territory boundary
+ * (used strictly when converting an official border to a user-editable sketch).
  */
 export function extractTerritoryPolygon(
   geom: GeoJSON.Geometry
 ): { polygon: GeoPoint[]; bounds: GeoBounds; center: GeoPoint; zoom: number } | null {
-  let rings: number[][][] = [];
-  if (geom.type === "Polygon" && geom.coordinates[0]) {
-    rings = [geom.coordinates[0]];
-  } else if (geom.type === "MultiPolygon") {
-    rings = geom.coordinates.map((poly) => poly[0]).filter((r): r is number[][] => Boolean(r));
-  }
-
-  let bestRing: number[][] = [];
-  let bestScore = -1;
-
-  for (const ring of rings) {
-    if (ring.length < 3) continue;
-    let minLat = 90;
-    let maxLat = -90;
-    let minLon = 180;
-    let maxLon = -180;
-    for (const c of ring) {
-      if (c[1] < minLat) minLat = c[1];
-      if (c[1] > maxLat) maxLat = c[1];
-      if (c[0] < minLon) minLon = c[0];
-      if (c[0] > maxLon) maxLon = c[0];
-    }
-    const lonSpan = maxLon - minLon;
-    if (lonSpan > 175) continue;
-    const score = lonSpan * (maxLat - minLat);
-    if (score > bestScore) {
-      bestScore = score;
-      bestRing = ring;
-    }
-  }
-
+  if (!isPolygonalGeometry(geom)) return null;
+  const focus = computePrimaryFocusBounds(geom);
+  const bestRing = focus.primaryRing;
   if (bestRing.length < 3) return null;
 
   const rawPoints: GeoPoint[] = bestRing
@@ -225,13 +319,13 @@ export function extractTerritoryPolygon(
       lon: Number(lon.toFixed(4)),
     }));
 
-  // Adapt simplification tolerance to territory size so edited rings remain smooth (~14..64 vertices)
-  let simplified = simplifyPolygon(rawPoints, 0.16);
-  if (simplified.length > 64) {
-    simplified = simplifyPolygon(rawPoints, 0.35);
+  // Keep up to ~48 vertices for smooth manual vertex editing
+  let simplified = simplifyPolygon(rawPoints, 0.14);
+  if (simplified.length > 48) {
+    simplified = simplifyPolygon(rawPoints, 0.28);
   }
-  if (simplified.length > 64) {
-    const step = Math.ceil(simplified.length / 56);
+  if (simplified.length > 48) {
+    const step = Math.ceil(simplified.length / 44);
     simplified = simplified.filter((_, idx) => idx % step === 0);
   }
   if (simplified.length < 3) {

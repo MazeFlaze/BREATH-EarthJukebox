@@ -6,7 +6,13 @@ import type {
   SonificationConfig,
   SonificationInput,
 } from "@/types/audio";
-import type { AudioCompositionSpec } from "@/types/breathe";
+import type { AudioCompositionSpec, SonificationMapping } from "@/types/breathe";
+
+export interface ScanVoiceInput {
+  row: number;
+  norm: number;
+  isAccent: boolean;
+}
 
 const STEPS = 16;
 
@@ -17,6 +23,24 @@ const KEY_SCALES: Record<string, number[]> = {
   "G major": [196.0, 220.0, 246.94, 261.63, 293.66, 329.63, 369.99, 392.0, 440.0, 493.88, 587.33, 659.25],
   "E minor": [164.81, 185.0, 196.0, 220.0, 246.94, 261.63, 293.66, 329.63, 369.99, 392.0, 440.0, 493.88],
 };
+
+/**
+ * Returns 16 monotonically ascending scale frequencies spanning sub-bass roots through upper bells
+ * so bottom-to-top latitude rows on the 2D scan bar always map harmoniously.
+ */
+export function getExtendedScaleFrequencies(musicalKey: string): number[] {
+  const base = KEY_SCALES[musicalKey] ?? KEY_SCALES["A minor"];
+  const subNotes = [base[0] * 0.5, base[2] * 0.5, base[4] * 0.5, (base[6] ?? base[0] * 1.5) * 0.5];
+  const combined = [...subNotes, ...base];
+  const deduped = Array.from(new Set(combined.map((f) => Number(f.toFixed(2))))).sort((a, b) => a - b);
+  let octIdx = 0;
+  while (deduped.length < 16) {
+    const candidate = Number((base[octIdx % base.length] * (2 + Math.floor(octIdx / base.length))).toFixed(2));
+    if (candidate > deduped[deduped.length - 1]) deduped.push(candidate);
+    octIdx += 1;
+  }
+  return deduped.slice(0, 16);
+}
 
 function clamp01(v: number): number {
   return Math.max(0, Math.min(1, v));
@@ -614,6 +638,109 @@ export class SonificationService {
     this.config = { ...this.config, ...partial };
     if (partial.volume !== undefined) this.setVolume(partial.volume);
     if (partial.waveform !== undefined) this.setWaveform(partial.waveform);
+  }
+
+  /**
+   * Prepares Web Audio graph for 2D map sweep sonification, pausing any timeline composition
+   * so continuous playback and interactive spatial chimes never compete.
+   */
+  public beginSpatialScan(): boolean {
+    if (this.playbackState === "playing") {
+      this.pause();
+    }
+    const ctx = this.ensureAudioGraph();
+    return Boolean(ctx);
+  }
+
+  /**
+   * Schedules a crisp polyphonic chime chord triggered when the 2D scanline intersects air-quality hotspots.
+   * Vertical band indices map bottom-to-top pitch while horizontal progress drives stereo panning.
+   */
+  public triggerSpatialScanColumn(
+    voices: ScanVoiceInput[],
+    mapping: SonificationMapping,
+    pan: number
+  ): void {
+    if (!voices.length) return;
+    const ctx = this.ensureAudioGraph();
+    if (!ctx || !this.filterNode || !this.masterGain) return;
+
+    const when = ctx.currentTime + 0.008;
+    const capped = voices.slice(0, 4);
+    const scale = getExtendedScaleFrequencies(mapping.musicalKey);
+    const peakNorm = Math.max(...capped.map((v) => v.norm));
+    const cutoff = 520 + mapping.brightness * 3600 + peakNorm * 1400;
+
+    this.filterNode.frequency.setTargetAtTime(cutoff, when, 0.03);
+    this.masterGain.gain.setTargetAtTime(mapping.volume * 0.44, when, 0.03);
+
+    const colPan = ctx.createStereoPanner();
+    const clampedPan = Math.max(-0.82, Math.min(0.82, pan * (0.45 + mapping.spatialSpread * 0.55)));
+    colPan.pan.setValueAtTime(clampedPan, when);
+    colPan.connect(this.filterNode);
+
+    const chordGainScale = 1 / Math.sqrt(capped.length);
+    let longestStopTime = when + 0.2;
+    let lastLeadFreq = scale[0];
+
+    for (let i = 0; i < capped.length; i += 1) {
+      const voice = capped[i];
+      const pitchShift = Math.round((voice.row - 7.5) * (0.55 + mapping.pitchSensitivity * 0.45) + 7.5);
+      const scaleIdx = Math.max(0, Math.min(scale.length - 1, pitchShift));
+      const freq = scale[scaleIdx];
+      lastLeadFreq = freq;
+
+      const onset = when + i * 0.011;
+      const decay = 0.16 + (1 - mapping.density) * 0.22 + voice.norm * 0.09;
+      const peakGain = Math.max(0.025, (0.08 + voice.norm * 0.17) * chordGainScale);
+
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0.0001, onset);
+      env.gain.linearRampToValueAtTime(peakGain, onset + 0.009);
+      env.gain.exponentialRampToValueAtTime(0.0001, onset + decay);
+
+      const osc = ctx.createOscillator();
+      osc.type = mapping.waveform || this.config.waveform;
+      osc.frequency.setValueAtTime(freq, onset);
+      osc.connect(env);
+      env.connect(colPan);
+      osc.start(onset);
+      osc.stop(onset + decay + 0.03);
+      longestStopTime = Math.max(longestStopTime, onset + decay + 0.05);
+
+      if (voice.isAccent && this.config.enableHarmonics) {
+        const shimmerEnv = ctx.createGain();
+        shimmerEnv.gain.setValueAtTime(0.0001, onset + 0.004);
+        shimmerEnv.gain.linearRampToValueAtTime(peakGain * 0.42, onset + 0.012);
+        shimmerEnv.gain.exponentialRampToValueAtTime(0.0001, onset + 0.13);
+
+        const shimmerOsc = ctx.createOscillator();
+        shimmerOsc.type = "sine";
+        shimmerOsc.frequency.setValueAtTime(freq * 2, onset + 0.004);
+        shimmerOsc.connect(shimmerEnv);
+        shimmerEnv.connect(colPan);
+        shimmerOsc.start(onset + 0.004);
+        shimmerOsc.stop(onset + 0.16);
+      }
+    }
+
+    const cleanupDelayMs = Math.max(250, Math.ceil((longestStopTime - ctx.currentTime) * 1000) + 60);
+    window.setTimeout(() => {
+      try {
+        colPan.disconnect();
+      } catch {
+        // Ignore disconnected node during teardown
+      }
+    }, cleanupDelayMs);
+
+    this.clockState = {
+      ...this.clockState,
+      activeFrequencyHz: Number(lastLeadFreq.toFixed(1)),
+    };
+  }
+
+  public endSpatialScan(): void {
+    // Voices naturally decay within ~0.4s; no drone sustain to tear down.
   }
 
   public destroy(): void {
