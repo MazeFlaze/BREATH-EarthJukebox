@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "motion/react";
@@ -39,6 +39,8 @@ export function BasemapSwitcher({
   onChange: (mode: BasemapMode) => void;
   compact?: boolean;
 }) {
+  const [, startTransition] = useTransition();
+
   return (
     <div
       className={`b-basemap-switch ${compact ? "is-compact" : ""}`.trim()}
@@ -51,7 +53,11 @@ export function BasemapSwitcher({
           type="button"
           className={value === opt.value ? "is-active" : undefined}
           aria-pressed={value === opt.value}
-          onClick={() => onChange(opt.value)}
+          onClick={() => {
+            startTransition(() => {
+              onChange(opt.value);
+            });
+          }}
         >
           {opt.label}
         </button>
