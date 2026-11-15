@@ -44,3 +44,57 @@ test('Scientific sessions follow the same-origin runtime proxy when public URLs 
     if(oldWindow===undefined)delete global.window;else global.window=oldWindow;
   }
 });
+
+function loadScientificStatus() {
+  const statusFile = path.resolve(__dirname, '../src/services/scientificStatus.ts');
+  const statusMod = new Module(statusFile); statusMod.filename = statusFile; statusMod.paths = module.paths;
+  statusMod._compile(ts.transpileModule(fs.readFileSync(statusFile, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, statusFile);
+  return statusMod.exports;
+}
+
+test('describeScientificStatus classifies HTTP 503 unmounted catalog errors as retryable', () => {
+  const { describeScientificStatus } = loadScientificStatus();
+  const notice = describeScientificStatus(
+    'Error: Scientific API 503: Verified catalog is not exported/mounted. Run the existing exporter manually.',
+    0,
+    false
+  );
+  assert.ok(notice);
+  assert.equal(notice.kind, 'unmounted');
+  assert.equal(notice.canRetry, true);
+  assert.match(notice.title, /unavailable|not.*mounted/i);
+  assert.match(notice.detail, /Scientific API 503/);
+  assert.match(notice.detail, /Verified catalog is not exported\/mounted/);
+
+  const withoutPrefix = describeScientificStatus('Scientific API 503: No verified catalog', 0, false);
+  assert.ok(withoutPrefix);
+  assert.equal(withoutPrefix.kind, 'unmounted');
+  assert.equal(withoutPrefix.canRetry, true);
+});
+
+test('describeScientificStatus classifies empty ready catalog as retryable empty state', () => {
+  const { describeScientificStatus } = loadScientificStatus();
+  const notice = describeScientificStatus('', 0, true);
+  assert.ok(notice);
+  assert.equal(notice.kind, 'empty');
+  assert.equal(notice.canRetry, true);
+  assert.match(notice.title, /0 verified|no verified/i);
+  assert.match(notice.detail, /0 verified NASA.*indexed/i);
+});
+
+test('describeScientificStatus preserves non-503 scientific API errors without catalog retry', () => {
+  const { describeScientificStatus } = loadScientificStatus();
+  const notice = describeScientificStatus('Error: Scientific API 409: Calibration differs', 24, true);
+  assert.ok(notice);
+  assert.equal(notice.kind, 'error');
+  assert.equal(notice.canRetry, false);
+  assert.ok(notice.title.length > 0);
+  assert.match(notice.detail, /Error: Scientific API 409: Calibration differs/);
+});
+
+test('describeScientificStatus returns null when catalog has ready snapshots or is still loading without error', () => {
+  const { describeScientificStatus } = loadScientificStatus();
+  assert.equal(describeScientificStatus('', 24, true), null);
+  assert.equal(describeScientificStatus('', 0, false), null);
+  assert.equal(describeScientificStatus('   ', 1, true), null);
+});

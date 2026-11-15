@@ -6,6 +6,7 @@ import { useBreathe } from '@/context/BreatheContext';
 import { useScientificClock, useScientificSession } from '@/context/ScientificSessionContext';
 import { ScientificRaster } from './ScientificRaster';
 import { selectContextEvents } from '../../../public/audio/geos-cf-orchestration.mjs';
+import { describeScientificStatus } from '@/services/scientificStatus';
 import type { ScientificSelection, SessionBounds } from '@/types/scientificSession';
 import type { DetailResolution } from '@/types/geosCfDetail';
 import type { Pollutant } from '@/types/notebookDemo';
@@ -71,7 +72,6 @@ function ScientificPlayback({ variant }: { variant: 'explore' | 'studio' }) {
   };
   return <>
     {s.busy && <p role="status" className={styles.message}>Preparing verified data and arrangement on the backend…</p>}
-    {s.error && <p role="alert" className={`${styles.message} ${styles.error}`}>{s.error}</p>}
     {plan && <div className={styles.grid}><section className={styles.card}><h2>{q.scope === 'compare' ? 'A / B · one clock' : 'Verified data map'}</h2>
       <p className={styles.mono}>{slot?.timestamp ?? '—'} · {plan.wire.unit} · fixed log99 color scale · grey = missing</p>
       <div className={styles.timestamps}>{plan.wire.slots.map((slot, i) => <button className="b-button b-button-secondary" key={slot.timestamp} aria-pressed={i === slotIndex} onClick={() => s.seek(slot.first)}>{slot.timestamp.slice(11, 16)}{slot.missing ? ' · missing' : ''}</button>)}</div>
@@ -109,6 +109,7 @@ function ScientificSelectionPanel({ variant }: { variant: 'explore' | 'studio' }
   const s = useScientificSession(), b = useBreathe(), q = s.selection;
   const [picker, setPicker] = useState(false);
   const ready = (s.catalog?.entries ?? []).filter(e => e.status === 'ready').sort((a, b) => (a.timestamp_utc ?? '').localeCompare(b.timestamp_utc ?? ''));
+  const notice = describeScientificStatus(s.error, ready.length, Boolean(s.catalog));
   const patch = (value: Partial<ScientificSelection>) => s.updateSelection(value);
   const bounds = (i: number, value: SessionBounds) => {
     const regions = [...q.regions]; regions[i] = value; patch({ regions });
@@ -117,6 +118,30 @@ function ScientificSelectionPanel({ variant }: { variant: 'explore' | 'studio' }
     <header className={styles.heading}><div><h1>{variant === 'explore' ? 'Explore verified data' : 'Scientific Sonification Studio'}</h1><p>One scientific session · six pollutants · source-bound playback</p></div>
       <div className={styles.actions}><Link className="b-button b-button-primary" href={variant === 'explore' ? '/studio' : '/explore'}>{variant === 'explore' ? 'Continue to Studio →' : '← Explore data'}</Link>
         <button className="b-button b-button-secondary" onClick={s.exit}>Return to map workspace</button></div></header>
+    {notice && (
+      <div
+        role={notice.kind === 'empty' ? 'status' : 'alert'}
+        className={`${styles.notice} ${notice.kind === 'empty' ? '' : styles.noticeError}`.trim()}
+      >
+        <h2 className={styles.noticeTitle}>{notice.title}</h2>
+        <p className={styles.noticeDetail}>{notice.detail}</p>
+        <div className={styles.noticeActions}>
+          {notice.canRetry && (
+            <button
+              type="button"
+              className="b-button b-button-primary"
+              disabled={s.busy}
+              onClick={() => void s.refresh()}
+            >
+              Retry catalog
+            </button>
+          )}
+          <button type="button" className="b-button b-button-secondary" onClick={s.exit}>
+            Return to map workspace
+          </button>
+        </div>
+      </div>
+    )}
     <section className={styles.card} aria-label="Scientific selection">
       <div className={styles.controls}>
         <label>Pollutant<select value={q.pollutant} onChange={e => patch({ pollutant: e.target.value as Pollutant })}>{POLLUTANTS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
