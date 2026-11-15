@@ -111,7 +111,7 @@ jobs:
       - name: Provision or Update Backend Container App
         if: steps.check-secrets.outputs.configured == 'true'
         env:
-          RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP || 'rg-breathe-earth-jukebox' }}
+          RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP || 'rg-breathe' }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
           ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
           ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
@@ -128,8 +128,16 @@ jobs:
 
           az extension add --name containerapp --upgrade --yes
 
-          # Determine location from Resource Group
-          LOCATION=$(az group show --name "${RESOURCE_GROUP}" --query location -o tsv)
+          # Determine location from ACR or Resource Group (ensuring allowed region such as eastasia)
+          LOCATION="${{ vars.AZURE_LOCATION }}"
+          if [ -z "$LOCATION" ]; then
+            LOCATION=$(az acr show --name "${ACR_LOGIN_SERVER%%.*}" --query location -o tsv 2>/dev/null || echo "")
+          fi
+          if [ -z "$LOCATION" ] || [ "$LOCATION" = "southeastasia" ]; then
+            LOCATION="eastasia"
+          fi
+          echo " Target Location: ${LOCATION}"
+
           ENVIRONMENT_NAME="cae-breathe"
 
           # 1. Ensure Container Apps Managed Environment exists
@@ -247,7 +255,7 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Deploy Frontend Container App
         env:
-          RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP || 'rg-breathe-earth-jukebox' }}
+          RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP || 'rg-breathe' }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
           ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
           ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
