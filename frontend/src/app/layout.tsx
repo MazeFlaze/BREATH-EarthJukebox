@@ -5,6 +5,7 @@ import "./archive.css";
 import "./gallery.css";
 import "./responsive.css";
 import "./redesign.css";
+import "./landing.css";
 import { BreatheProvider } from "@/context/BreatheContext";
 import { SiteHeader } from "@/components/breathe/SharedUI";
 
