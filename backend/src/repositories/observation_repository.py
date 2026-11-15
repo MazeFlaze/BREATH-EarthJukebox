@@ -135,6 +135,7 @@ class ObservationRepository:
         value: Optional[float],
         unit: str,
         quality_status: str = "valid",
+        auto_commit: bool = True,
     ) -> ObservationSample:
         existing = (
             db.query(ObservationSample)
@@ -152,8 +153,9 @@ class ObservationRepository:
             existing.unit = unit
             existing.quality_status = quality_status
             existing.dataset_asset_id = dataset_asset_id
-            db.commit()
-            db.refresh(existing)
+            if auto_commit:
+                db.commit()
+                db.refresh(existing)
             return existing
 
         sample = ObservationSample(
@@ -168,6 +170,7 @@ class ObservationRepository:
             quality_status=quality_status,
         )
         db.add(sample)
-        db.commit()
-        db.refresh(sample)
+        if auto_commit:
+            db.commit()
+            db.refresh(sample)
         return sample

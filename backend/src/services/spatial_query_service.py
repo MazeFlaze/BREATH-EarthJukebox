@@ -22,6 +22,7 @@ from ..providers.geos_cf import GEOSCFProvider
 from ..repositories.dataset_repository import DatasetRepository
 from ..repositories.observation_repository import ObservationRepository
 from ..utils.logger import logger
+from ..utils.storage import get_portable_storage_path
 from .jukebox_helpers import (
     build_normalization_meta,
     build_provenance_meta,
@@ -137,9 +138,10 @@ class SpatialQueryService:
         file_path = None
         raw_points = None
 
-        if asset and Path(asset.storage_path).exists():
-            file_path = Path(asset.storage_path)
-        else:
+        if asset:
+            file_path = asset.resolve_path()
+
+        if not file_path:
             # Check local raw directory
             expected_filename = self.provider.format_granule_filename(req_dt.to_pydatetime())
             candidate_path = settings.DATA_STORAGE_ROOT / expected_filename
@@ -204,7 +206,7 @@ class SpatialQueryService:
                     asset_id=asset_id,
                     dataset_source_id=request.datasetId,
                     original_filename=filename,
-                    storage_path=str(file_path) if file_path else f"opendap:{self.provider.build_opendap_url(req_dt.to_pydatetime())}",
+                    storage_path=get_portable_storage_path(file_path) if file_path else f"opendap:{self.provider.build_opendap_url(req_dt.to_pydatetime())}",
                     checksum_sha256="",
                     time_start=req_dt.to_pydatetime(),
                     time_end=req_dt.to_pydatetime(),

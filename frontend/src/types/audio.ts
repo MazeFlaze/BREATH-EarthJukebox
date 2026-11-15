@@ -1,62 +1,50 @@
-/**
- * Audio and Sonification Shared Types
- * 
- * Defines the contract between N03 (Sonification) and N04 (Frontend AudioPlayer).
- */
+export type PlaybackState = "idle" | "playing" | "paused" | "stopped" | "error";
 
-/**
- * Standard input payload sent to the sonification synthesizer for an observation.
- */
-export interface SonificationInput {
-  /** Numeric observation value to sonify */
-  value: number;
-
-  /** Minimum reference value in current dataset range */
-  min: number;
-
-  /** Maximum reference value in current dataset range */
-  max: number;
-
-  /** Observation timestamp */
-  timestamp: string;
-}
-
-/**
- * Playback lifecycle state machine for audio and timeline synchronization.
- */
-export type PlaybackState = "idle" | "playing" | "paused" | "stopped";
-
-/**
- * Waveform choices for Web Audio oscillator.
- */
 export type OscillatorWaveform = "sine" | "triangle" | "sawtooth" | "square";
 
-/**
- * Sonification engine configuration options.
- */
+export interface SonificationInput {
+  /** Primary metric measurement to map to pitch and density. */
+  value: number;
+  min: number;
+  max: number;
+  timestamp?: string;
+  label?: string;
+  variable?: string;
+}
+
 export interface SonificationConfig {
-  /** Base frequency in Hertz (Hz) mapped to the minimum data value (e.g., 130.81 Hz - C3) */
-  minFrequencyHz: number;
-
-  /** Peak frequency in Hertz (Hz) mapped to the maximum data value (e.g., 523.25 Hz - C5) */
-  maxFrequencyHz: number;
-
-  /** Audio master volume gain between 0.0 and 1.0 */
+  /** Base output gain (0.0 to 1.0) */
   volume: number;
-
-  /** Oscillator waveform type */
+  /** Primary oscillator timbre */
   waveform: OscillatorWaveform;
-
-  /** Enable harmonic overtone / resonance simulation for atmospheric thickness */
+  /** Minimum frequency in Hz (lower bound of audible scale) */
+  minFrequencyHz: number;
+  /** Maximum frequency in Hz (upper bound of audible scale) */
+  maxFrequencyHz: number;
+  /** Secondary harmonic oscillator toggle (rich atmospheric density) */
   enableHarmonics: boolean;
 }
 
-/**
- * Live audio telemetry emitted during playback.
- */
 export interface AudioTelemetry {
   currentFrequencyHz: number;
-  normalizedValue: number; // 0.0 - 1.0
-  gain: number;
-  state: PlaybackState;
+  normalizedValue: number;
+  gainLevel: number;
+  timestamp: string;
+}
+
+export interface AudioClockState {
+  activeCompositionId: string | null;
+  activeTitle: string;
+  playbackState: PlaybackState;
+  currentStep: number;
+  activeSlot: number;
+  progress: number;
+  elapsedSec: number;
+  totalSec: number;
+  rms: number;
+  spectralCentroid: number;
+  activeFrequencyHz: number;
+  waveformSamples: number[];
+  spectrumBins: number[];
+  scheduleMatrix: number[][];
 }

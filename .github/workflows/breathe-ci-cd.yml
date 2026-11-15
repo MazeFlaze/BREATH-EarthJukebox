@@ -1,0 +1,319 @@
+name: BREATHE Continuous Integration & Continuous Deployment
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: 'Target component to deploy (backend / both)'
+        required: false
+        default: 'backend'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: breathe-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  frontend-ci:
+    name: Frontend contracts and audio parity
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test:demo
+
+  backend-ci:
+    name: Backend Test Suite (FastAPI & Pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install System C-Libraries for NetCDF4 & HDF5
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libnetcdf-dev libhdf5-dev
+
+      - name: Install uv Package Manager
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "backend/requirements.txt"
+
+      - name: Install Backend Dependencies
+        run: |
+          uv pip install --system -r requirements.txt
+
+      - name: Run Pytest Test Suite
+        env:
+          PYTHONPATH: src:.
+        run: |
+          pytest -v tests/
+
+  deploy-backend:
+    name: CD - Deploy Backend to Azure Container Apps (Scale-to-Zero)
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [backend-ci]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Validate Azure Configuration Secrets
+        id: check-secrets
+        run: |
+          if [ -z "${{ secrets.AZURE_CREDENTIALS }}" ] || [ -z "${{ secrets.ACR_LOGIN_SERVER }}" ]; then
+            echo "::warning ::Azure secrets are not fully configured. Skipping production deployment."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to Azure
+        if: steps.check-secrets.outputs.configured == 'true'
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set up Docker Buildx
+        if: steps.check-secrets.outputs.configured == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Azure Container Registry
+        if: steps.check-secrets.outputs.configured == 'true'
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and Push Backend Image to ACR
+        if: steps.check-secrets.outputs.configured == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.ACR_LOGIN_SERVER }}/breathe-backend:${{ github.sha }}
+            ${{ secrets.ACR_LOGIN_SERVER }}/breathe-backend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Provision or Update Backend Container App
+        if: steps.check-secrets.outputs.configured == 'true'
+        env:
+          RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP || 'rg-breathe' }}
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "=========================================================="
+          echo " Deploying Backend to Azure Container Apps"
+          echo " Resource Group: ${RESOURCE_GROUP}"
+          echo " ACR:            ${ACR_LOGIN_SERVER}"
+          echo " Tag:            ${IMAGE_TAG}"
+          echo "=========================================================="
+
+          az extension add --name containerapp --upgrade --yes
+
+          # Determine location from ACR or Resource Group (ensuring allowed region such as eastasia)
+          LOCATION="${{ vars.AZURE_LOCATION }}"
+          if [ -z "$LOCATION" ]; then
+            LOCATION=$(az acr show --name "${ACR_LOGIN_SERVER%%.*}" --query location -o tsv 2>/dev/null || echo "")
+          fi
+          if [ -z "$LOCATION" ] || [ "$LOCATION" = "southeastasia" ]; then
+            LOCATION="eastasia"
+          fi
+          echo " Target Location: ${LOCATION}"
+
+          ENVIRONMENT_NAME="cae-breathe"
+
+          # 1. Ensure Container Apps Managed Environment exists
+          EXISTING_ENV=$(az containerapp env list --resource-group "${RESOURCE_GROUP}" --query "[0].name" -o tsv 2>/dev/null || echo "")
+          if [ -n "$EXISTING_ENV" ]; then
+            ENVIRONMENT_NAME="$EXISTING_ENV"
+            echo "Reusing existing Container Apps Environment: ${ENVIRONMENT_NAME}"
+          else
+            ENVIRONMENT_NAME="cae-breathe"
+            echo "Creating Container Apps Environment: ${ENVIRONMENT_NAME} in ${LOCATION}..."
+            az containerapp env create \
+              --name "${ENVIRONMENT_NAME}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --location "${LOCATION}" \
+              --logs-destination none \
+              --output table
+          fi
+
+          # 2. Deploy or Update Backend Container App (Scale-to-Zero: min-replicas 0)
+          BACKEND_APP="breathe-backend"
+          BACKEND_IMAGE="${ACR_LOGIN_SERVER}/${BACKEND_APP}:${IMAGE_TAG}"
+          echo "Deploying Backend Container App (${BACKEND_APP})..."
+
+          if az containerapp show --name "${BACKEND_APP}" --resource-group "${RESOURCE_GROUP}" > /dev/null 2>&1; then
+            echo "Updating existing Backend Container App..."
+            az containerapp update \
+              --name "${BACKEND_APP}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --image "${BACKEND_IMAGE}" \
+              --set-env-vars \
+                DATABASE_URL="${DATABASE_URL}" \
+                DATABASE_URL_UNPOOLED="${DATABASE_URL_UNPOOLED}" \
+                HOST="0.0.0.0" \
+                PORT="8000" \
+                ENVIRONMENT="production" \
+                DEBUG="False"
+          else
+            echo "Creating new Backend Container App with scale-to-zero..."
+            az containerapp create \
+              --name "${BACKEND_APP}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --environment "${ENVIRONMENT_NAME}" \
+              --image "${BACKEND_IMAGE}" \
+              --registry-server "${ACR_LOGIN_SERVER}" \
+              --registry-username "${ACR_USERNAME}" \
+              --registry-password "${ACR_PASSWORD}" \
+              --target-port 8000 \
+              --ingress external \
+              --min-replicas 0 \
+              --max-replicas 2 \
+              --cpu 0.5 \
+              --memory 1.0Gi \
+              --env-vars \
+                DATABASE_URL="${DATABASE_URL}" \
+                DATABASE_URL_UNPOOLED="${DATABASE_URL_UNPOOLED}" \
+                HOST="0.0.0.0" \
+                PORT="8000" \
+                ENVIRONMENT="production" \
+                DEBUG="False"
+          fi
+
+          BACKEND_FQDN=$(az containerapp show --name "${BACKEND_APP}" --resource-group "${RESOURCE_GROUP}" --query properties.configuration.ingress.fqdn -o tsv)
+
+          echo "=========================================================="
+          echo " Backend Deployment to Azure Container Apps completed!"
+          echo " Backend API:         https://${BACKEND_FQDN}"
+          echo " Backend Healthcheck: https://${BACKEND_FQDN}/api/v1/health"
+          echo " OpenAPI Docs:        https://${BACKEND_FQDN}/docs"
+          echo "=========================================================="
+
+          # Write summary to GitHub Actions job summary
+          echo "### 🚀 Azure Backend Deployment Succeeded" >> $GITHUB_STEP_SUMMARY
+          echo "- **Backend API:** [https://${BACKEND_FQDN}](https://${BACKEND_FQDN})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Healthcheck:** [https://${BACKEND_FQDN}/api/v1/health](https://${BACKEND_FQDN}/api/v1/health)" >> $GITHUB_STEP_SUMMARY
+          echo "- **OpenAPI Docs:** [https://${BACKEND_FQDN}/docs](https://${BACKEND_FQDN}/docs)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image:** \`${BACKEND_IMAGE}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Scale Policy:** \`minReplicas=0\` (Scale-to-Zero on idle)" >> $GITHUB_STEP_SUMMARY
+
+  # NOTE: Frontend CD is ready below, currently disabled until frontend development is finalized.
+  # To enable frontend auto-deploy, set vars.ENABLE_FRONTEND_DEPLOY to 'true' in GitHub Settings.
+  deploy-frontend:
+    name: CD - Deploy Frontend to Azure Container Apps
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request' &&
+      vars.ENABLE_FRONTEND_DEPLOY == 'true'
+    needs: [backend-ci]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to ACR
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+      - name: Build and Push Frontend Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.ACR_LOGIN_SERVER }}/breathe-frontend:${{ github.sha }}
+            ${{ secrets.ACR_LOGIN_SERVER }}/breathe-frontend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Deploy Frontend Container App
+        env:
+          RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP || 'rg-breathe' }}
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          az extension add --name containerapp --upgrade --yes
+          ENVIRONMENT_NAME="cae-breathe"
+          FRONTEND_APP="breathe-frontend"
+          FRONTEND_IMAGE="${ACR_LOGIN_SERVER}/${FRONTEND_APP}:${IMAGE_TAG}"
+          BACKEND_FQDN=$(az containerapp show --name breathe-backend --resource-group "${RESOURCE_GROUP}" --query properties.configuration.ingress.fqdn -o tsv || echo "")
+
+          if az containerapp show --name "${FRONTEND_APP}" --resource-group "${RESOURCE_GROUP}" > /dev/null 2>&1; then
+            az containerapp update \
+              --name "${FRONTEND_APP}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --image "${FRONTEND_IMAGE}" \
+              --set-env-vars \
+                NEXT_PUBLIC_API_URL="https://${BACKEND_FQDN}" \
+                DATABASE_URL="${DATABASE_URL}" \
+                PORT="3000" \
+                NODE_ENV="production"
+          else
+            az containerapp create \
+              --name "${FRONTEND_APP}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --environment "${ENVIRONMENT_NAME}" \
+              --image "${FRONTEND_IMAGE}" \
+              --registry-server "${ACR_LOGIN_SERVER}" \
+              --registry-username "${ACR_USERNAME}" \
+              --registry-password "${ACR_PASSWORD}" \
+              --target-port 3000 \
+              --ingress external \
+              --min-replicas 0 \
+              --max-replicas 3 \
+              --cpu 0.5 \
+              --memory 1.0Gi \
+              --env-vars \
+                NEXT_PUBLIC_API_URL="https://${BACKEND_FQDN}" \
+                DATABASE_URL="${DATABASE_URL}" \
+                PORT="3000" \
+                NODE_ENV="production"
+          fi

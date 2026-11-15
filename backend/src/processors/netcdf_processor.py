@@ -284,6 +284,54 @@ class NetCDFProcessor:
         high_ratio = round(max(0.0, 1.0 - cum_mod), 4)
         return {"low": low_ratio, "moderate": mod_ratio, "high": high_ratio}
 
+    @staticmethod
+    def _points_in_ring(
+        lat_grid: np.ndarray,
+        lon_grid: np.ndarray,
+        ring: List[Tuple[float, float]],
+    ) -> np.ndarray:
+        """Vectorized even-odd ray-casting mask over (lat_grid, lon_grid) for a [(lat, lon), ...] ring."""
+        inside = np.zeros(lat_grid.shape, dtype=bool)
+        if len(ring) < 3:
+            return inside
+        n = len(ring)
+        for i in range(n):
+            yi, xi = float(ring[i][0]), float(ring[i][1])
+            yj, xj = float(ring[(i + 1) % n][0]), float(ring[(i + 1) % n][1])
+            crosses_lat = (yi > lat_grid) != (yj > lat_grid)
+            x_intersect = ((xj - xi) * (lat_grid - yi)) / (yj - yi + 1e-12) + xi
+            inside ^= crosses_lat & (lon_grid < x_intersect)
+        return inside
+
+    @classmethod
+    def _snap_to_nearest_cell(
+        cls,
+        da: xr.DataArray,
+        grid_lats: np.ndarray,
+        grid_lons: np.ndarray,
+        lat_min: float,
+        lat_max: float,
+        lon_min: float,
+        lon_max: float,
+        polygon_rings: Optional[List[List[Tuple[float, float]]]] = None,
+    ) -> np.ndarray:
+        """Selects the nearest model grid cell to a sub-grid ROI centroid."""
+        center_lat = 0.5 * (lat_min + lat_max)
+        center_lon = cls.normalize_longitude(
+            0.5 * (lon_min + lon_max) if lon_min <= lon_max else lon_min + 0.5 * ((lon_max - lon_min) % 360.0)
+        )
+        if polygon_rings and polygon_rings[0]:
+            primary_ring = polygon_rings[0]
+            center_lat = float(sum(pt[0] for pt in primary_ring) / len(primary_ring))
+            center_lon = cls.normalize_longitude(
+                float(sum(pt[1] for pt in primary_ring) / len(primary_ring))
+            )
+        lat_idx = int(np.argmin(np.abs(grid_lats - center_lat)))
+        lon_diffs = np.abs(((grid_lons - center_lon + 180.0) % 360.0) - 180.0)
+        lon_idx = int(np.argmin(lon_diffs))
+        region_da = da.isel(lat=lat_idx, lon=lon_idx)
+        return np.atleast_1d(region_da.values.astype(np.float64))
+
     @classmethod
     def extract_bbox_summary(
         cls,
@@ -294,11 +342,12 @@ class NetCDFProcessor:
         lon_min: float,
         lon_max: float,
         timestamp: Optional[Union[str, datetime]] = None,
+        polygon_rings: Optional[List[List[Tuple[float, float]]]] = None,
     ) -> Dict[str, Any]:
         """
         Extracts spatial summary statistics across an arbitrary rectangular bounding box
-        [lat_min, lat_max] x [lon_min, lon_max], supporting both 2D drag-box ROI selection
-        and spherical 3D patches projected to lat/lon coordinates.
+        [lat_min, lat_max] x [lon_min, lon_max], or optionally masks grid cells strictly inside
+        one or more (lat, lon) polygon boundary rings.
         """
         if variable not in ds.data_vars:
             raise KeyError(f"Variable '{variable}' not found in dataset. Available: {list(ds.data_vars.keys())}")
@@ -329,20 +378,29 @@ class NetCDFProcessor:
 
         snapped_to_nearest = False
         if matched_lats.size == 0 or matched_lons.size == 0:
-            # Drag-box smaller than grid spacing: fall back cleanly to nearest grid center
-            center_lat = 0.5 * (lat_min + lat_max)
-            center_lon = cls.normalize_longitude(
-                0.5 * (lon_min + lon_max) if lon_min <= lon_max else lon_min + 0.5 * ((lon_max - lon_min) % 360.0)
+            arr = cls._snap_to_nearest_cell(
+                da, grid_lats, grid_lons, lat_min, lat_max, lon_min, lon_max, polygon_rings
             )
-            lat_idx = int(np.argmin(np.abs(grid_lats - center_lat)))
-            lon_diffs = np.abs(((grid_lons - center_lon + 180.0) % 360.0) - 180.0)
-            lon_idx = int(np.argmin(lon_diffs))
-            region_da = da.isel(lat=lat_idx, lon=lon_idx)
-            arr = np.atleast_1d(region_da.values.astype(np.float64))
             snapped_to_nearest = True
         else:
             region_da = da.sel(lat=matched_lats, lon=matched_lons)
+            if "lat" in region_da.dims and "lon" in region_da.dims:
+                region_da = region_da.transpose("lat", "lon")
             arr = region_da.values.astype(np.float64)
+            if polygon_rings:
+                norm_lons = np.where(matched_lons > 180.0, ((matched_lons + 180.0) % 360.0) - 180.0, matched_lons)
+                lat2d, lon2d = np.meshgrid(matched_lats, norm_lons, indexing="ij")
+                poly_mask = np.zeros(lat2d.shape, dtype=bool)
+                for ring in polygon_rings:
+                    poly_mask |= cls._points_in_ring(lat2d, lon2d, ring)
+
+                if int(np.sum(poly_mask)) > 0:
+                    arr = arr[poly_mask]
+                else:
+                    arr = cls._snap_to_nearest_cell(
+                        da, grid_lats, grid_lons, lat_min, lat_max, lon_min, lon_max, polygon_rings
+                    )
+                    snapped_to_nearest = True
 
         valid_mask = np.isfinite(arr) & (np.abs(arr) < cls.FILL_VALUE_THRESHOLD)
         valid_values = arr[valid_mask]
@@ -352,10 +410,12 @@ class NetCDFProcessor:
         missing_count = total_count - valid_count
 
         if valid_count > 0:
+            min_val: Optional[float] = float(np.min(valid_values))
             mean_val: Optional[float] = float(np.mean(valid_values))
             p90_val: Optional[float] = float(np.percentile(valid_values, 90))
             max_val: Optional[float] = float(np.max(valid_values))
         else:
+            min_val = None
             mean_val = None
             p90_val = None
             max_val = None
@@ -371,6 +431,7 @@ class NetCDFProcessor:
                 "lon_max": float(lon_max),
             },
             "snapped_to_nearest": snapped_to_nearest,
+            "min": min_val,
             "mean": mean_val,
             "p90": p90_val,
             "max": max_val,

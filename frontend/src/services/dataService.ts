@@ -29,7 +29,13 @@ class DataService {
    * Prevents repeated checks during the same initialization cycle.
    */
   public async getDataset(): Promise<Dataset> {
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL;
+    const rawBackendUrl =
+      process.env.NEXT_PUBLIC_BACKEND_URL?.trim() ||
+      process.env.NEXT_PUBLIC_API_URL?.trim();
+    const backendUrl =
+      rawBackendUrl && rawBackendUrl !== "undefined" && rawBackendUrl !== "null"
+        ? rawBackendUrl.replace(/\/+$/, "").replace(/\/api\/v1\/?$/i, "")
+        : "";
 
     // Return in-flight fetch promise if an initialization request is already pending
     if (this.pendingFetchPromise) {

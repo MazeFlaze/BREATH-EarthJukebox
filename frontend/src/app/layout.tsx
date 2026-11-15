@@ -1,32 +1,28 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./screens.css";
+import "./archive.css";
+import "./gallery.css";
+import "./responsive.css";
+import "./redesign.css";
+import "./landing.css";
+import { BreatheProvider } from "@/context/BreatheContext";
+import { SiteHeader } from "@/components/breathe/SharedUI";
 
 export const metadata: Metadata = {
-  title: "BREATHE | Earth Information Jukebox – NASA Space Apps Challenge 2026",
+  title: "BREATHE — Earth Air Quality Sonification",
   description:
-    "Hear what the atmosphere is telling us. An interactive Earth science sonification experience transforming NASA Earth observations into sound.",
-  keywords: [
-    "NASA Space Apps 2026",
-    "Earth Information Center",
-    "Aerosol Optical Depth",
-    "Sonification",
-    "Web Audio API",
-    "Climate Science",
-    "Earth Observations",
-  ],
-  authors: [{ name: "BREATHE Hackathon Team" }],
-  viewport: "width=device-width, initial-scale=1, maximum-scale=5",
+    "Explore atmospheric data from NASA Earth Observations and translate air quality into sound.",
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark scroll-smooth">
-      <body className="min-h-screen bg-space-950 text-slate-100 antialiased selection:bg-cyan-500 selection:text-space-950">
-        {children}
+    <html lang="en">
+      <body>
+        <BreatheProvider>
+          <SiteHeader />
+          <main>{children}</main>
+        </BreatheProvider>
       </body>
     </html>
   );

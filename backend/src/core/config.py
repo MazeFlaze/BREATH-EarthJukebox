@@ -19,6 +19,7 @@ class Settings(BaseSettings):
 
     # Database Configuration (PostgreSQL with SQLite fallback)
     DATABASE_URL: str = "sqlite:///src/data/breathe.db"
+    DATABASE_URL_UNPOOLED: Optional[str] = None
 
     # Data Storage Root for NetCDF files
     DATA_STORAGE_ROOT: Path = Path(__file__).resolve().parent.parent / "data" / "raw"
@@ -53,7 +54,7 @@ class Settings(BaseSettings):
     ]
 
     model_config = SettingsConfigDict(
-        env_file=(".env", "backend/.env"),
+        env_file=(".env.local", ".env", "backend/.env.local", "backend/.env", "../.env.local", "../.env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
