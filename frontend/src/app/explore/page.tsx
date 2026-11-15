@@ -46,6 +46,8 @@ import {
 } from "@/components/breathe/SharedUI";
 import { AudioTransport, RhythmGrid } from "@/components/breathe/SoundVisuals";
 import { useBreathe } from "@/context/BreatheContext";
+import { useScientificSession } from "@/context/ScientificSessionContext";
+import { ScientificEntry, ScientificWorkspace } from "@/components/scientific/ScientificWorkspace";
 import {
   formatUtc,
   getLayerDefinition,
@@ -55,6 +57,7 @@ import {
 import { formatBounds, parseCoordinateQuery, zoomForBounds } from "@/lib/geoUtils";
 
 export default function ExplorePage() {
+  const scientific = useScientificSession();
   const {
     selection,
     territories,
@@ -112,12 +115,12 @@ export default function ExplorePage() {
   const compositionSpec = useMemo(() => buildCompositionSpec(), [buildCompositionSpec]);
 
   useEffect(() => {
-    if (!timelinePlaying) return;
+    if (!timelinePlaying || scientific.enabled) return;
     const id = window.setInterval(() => {
       setTimeIndex((prev) => (prev + 1) % timeSlots.length);
     }, 1500);
     return () => window.clearInterval(id);
-  }, [timelinePlaying, setTimeIndex]);
+  }, [timelinePlaying, setTimeIndex, scientific.enabled]);
 
   const matchingPlaces = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -227,8 +230,10 @@ export default function ExplorePage() {
 
   const mapMode = camera.mode === "globe" ? "globe" : "flat";
 
+  if (scientific.enabled) return <ScientificWorkspace variant="explore" />;
   return (
     <div className="b-page">
+      <ScientificEntry />
       <div className="b-container b-explore-intro b-workspace-intro">
         <div>
           <h1>Earth Explorer</h1>

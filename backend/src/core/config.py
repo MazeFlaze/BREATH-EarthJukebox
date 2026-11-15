@@ -25,6 +25,9 @@ class Settings(BaseSettings):
 
     # Data Storage Root for NetCDF files
     DATA_STORAGE_ROOT: Path = Path(__file__).resolve().parent.parent / "data" / "raw"
+    NASA_ARCHIVE_ROOT: Path = Path(__file__).resolve().parent.parent / "data" / "nasa-archive"
+    # Read-only verified artifacts from the existing manual exporter. Mount this directory in production.
+    GEOS_CF_CATALOG_ROOT: Path = Path(__file__).resolve().parents[3] / "frontend/public/data/geos-cf-catalog"
 
     # NASA GEOS-CF Product Configuration
     NASA_PROVIDER: str = "NASA GMAO"

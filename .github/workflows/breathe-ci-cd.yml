@@ -36,6 +36,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Node for Python/browser numeric parity tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Install System C-Libraries for NetCDF4 & HDF5
         run: |
           sudo apt-get update
@@ -83,7 +88,10 @@ jobs:
           npm run typecheck
 
       - name: Run Frontend Unit Tests
-        run: npm test
+        run: npm run test:contracts
+
+      - name: Run Scientific Audio and Contract Parity Tests
+        run: npm run test:demo
 
       - name: Build Production Next.js Bundle
         env:

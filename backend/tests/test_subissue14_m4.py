@@ -175,10 +175,6 @@ def test_temporal_jukebox_db_first_nearest_grid_and_log_scale(tmp_path: Path):
         assert pt.normalizedValue == ObservationNormalizer.normalize("NO2", 2.5e-9, method="log_scale")
 
         # Cleanup synthetic test DB asset/samples
-        try:
-            from backend.src.models.entities import DatasetAsset
-        except ImportError:
-            from src.models.entities import DatasetAsset
         import uuid
 
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"geos-cf-v2-aqc:{sample_nc.name}"))

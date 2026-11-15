@@ -121,6 +121,16 @@ export function buildStaticWaveform(spec: AudioCompositionSpec, count = 64): num
 }
 
 export class SonificationService {
+  private externalStop: (() => void) | null = null;
+  /** Exclusive renderer adapter: share the existing context; never run both schedulers. */
+  public useScientificRenderer(stop: () => void): AudioContext {
+    this.stop();
+    this.externalStop = stop;
+    const context = this.ensureAudioGraph();
+    if (!context) throw Error("Web Audio is unavailable");
+    return context;
+  }
+  public releaseScientificRenderer(): void { this.externalStop = null; }
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private filterNode: BiquadFilterNode | null = null;
@@ -562,6 +572,7 @@ export class SonificationService {
   }
 
   public playComposition(spec: AudioCompositionSpec): void {
+    this.externalStop?.();
     const isNewTrack = this.clockState.activeCompositionId !== spec.id;
     this.syncPreviewSpec(spec);
 
@@ -724,6 +735,7 @@ export class SonificationService {
    * so continuous playback and interactive spatial chimes never compete.
    */
   public beginSpatialScan(): boolean {
+    this.externalStop?.();
     if (this.playbackState === "playing") {
       this.pause();
     }

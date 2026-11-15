@@ -1,6 +1,17 @@
+# Local checkpoint backups; never publish cached data or the local-only demo UI.
+.local-backups/
+
 # Dependencies
 node_modules/
 frontend/node_modules/
+.npm-cache/
+
+# Local-only notebook demo UI; processing/audio support remains versioned.
+/frontend/src/app/demo/
+# Local R&D harness imports the ignored demo route; product contract tests remain tracked.
+/frontend/scripts/unified-demo.test.cjs
+/frontend/public/data/geos-cf-catalog/
+/backend/src/data/nasa-archive/
 .pnp
 .pnp.js
 .yarn/cache

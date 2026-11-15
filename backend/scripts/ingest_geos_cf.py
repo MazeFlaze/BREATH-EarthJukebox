@@ -8,7 +8,7 @@ Usage Examples:
   python backend/scripts/ingest_geos_cf.py --source local --file "/path/to/GEOS.cf.ana.nc4"
 
   # Ingest remote NASA GEOS-CF data over time window:
-  python backend/scripts/ingest_geos_cf.py --source nasa --start "2026-11-13T00:00:00Z" --end "2026-11-13T03:00:00Z" --variables PM25_RH35
+  python backend/scripts/ingest_geos_cf.py --source nasa --start "2026-11-13T00:30:00Z" --end "2026-11-13T03:30:00Z" --variables PM25_RH35
 
   # Dry-run validation:
   python backend/scripts/ingest_geos_cf.py --source local --file "/path/to/data.nc4" --dry-run
@@ -30,10 +30,14 @@ try:
     from backend.src.core.database import SessionLocal, init_db
     from backend.src.services.ingestion_service import ingestion_service
     from backend.src.utils.logger import logger
+    from backend.src.core.config import settings
+    from backend.src.providers.geos_cf import GEOSCFProvider
 except ImportError:
     from src.core.database import SessionLocal, init_db
     from src.services.ingestion_service import ingestion_service
     from src.utils.logger import logger
+    from src.core.config import settings
+    from src.providers.geos_cf import GEOSCFProvider
 
 
 def parse_args():
@@ -59,12 +63,12 @@ def parse_args():
     parser.add_argument(
         "--start",
         type=str,
-        help="Start UTC timestamp in ISO 8601 format, e.g. '2026-11-13T00:00:00Z' (required if --source nasa).",
+        help="Start UTC hourly midpoint, e.g. '2026-11-13T00:30:00Z' (required if --source nasa).",
     )
     parser.add_argument(
         "--end",
         type=str,
-        help="End UTC timestamp in ISO 8601 format, e.g. '2026-11-13T03:00:00Z' (required if --source nasa).",
+        help="Inclusive end UTC hourly midpoint, e.g. '2026-11-13T03:30:00Z' (required if --source nasa).",
     )
     parser.add_argument(
         "--variables",
@@ -77,12 +81,27 @@ def parse_args():
         action="store_true",
         help="Validate NetCDF file without writing records to database.",
     )
+    parser.add_argument("--archive-dir", type=Path, default=settings.NASA_ARCHIVE_ROOT,
+                        help="Dedicated NASA archive directory, separate from test/raw fixtures")
+    parser.add_argument("--retention", choices=["preserve", "bounded"], default="preserve",
+                        help="Default preserve keeps the whole requested archive; bounded explicitly enables eviction")
+    parser.add_argument("--max-raw-files", type=int, default=24, help="Positive file limit used only with --retention bounded")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-    init_db()
+    if args.max_raw_files < 1:
+        logger.error("--max-raw-files must be positive")
+        sys.exit(1)
+    if args.source == "nasa":
+        ingestion_service.provider = GEOSCFProvider(raw_storage_dir=args.archive_dir.resolve(),
+                                                   preserve_raw=args.retention == "preserve")
+        settings.MAX_RAW_FILES_TO_KEEP = args.max_raw_files
+        print(f"Archive: {ingestion_service.provider.raw_storage_dir}; retention={args.retention}", flush=True)
+    # A dry run must not bootstrap fixtures or create database records.
+    if not args.dry_run:
+        init_db(bootstrap_raw=False)
 
     with SessionLocal() as db:
         if args.source == "local":
@@ -117,11 +136,10 @@ def main():
                     raw_dir=Path(args.dir).resolve() if args.dir else None,
                     dry_run=args.dry_run,
                 )
-                print(
-                    f"\n[SUCCESS] Batch ingested {summary['ingested']}/{summary['files_found']} files "
-                    f"({summary['skipped']} skipped, {summary['materialized_samples']} preset samples)."
-                )
-                sys.exit(0)
+                failed = int(summary["failed"])
+                print(f"\n[{'FAILED' if failed else 'SUCCESS'}] found={summary['files_found']} "
+                      f"ingested={summary['ingested']} skipped={summary['skipped']} failed={failed}", flush=True)
+                sys.exit(1 if failed else 0)
             except Exception as e:
                 logger.error(f"Batch ingestion failed: {e}")
                 sys.exit(1)
@@ -144,8 +162,11 @@ def main():
                     status = r.get("status", "ok")
                     ts = r.get("timestamp") or r.get("time_start")
                     logger.info(f"  [{status.upper()}] {ts}")
-                print(f"\n[SUCCESS] Remote ingestion completed for {len(results)} granules.")
-                sys.exit(0)
+                failed = sum(r.get("status") == "failed" for r in results)
+                succeeded = len(results) - failed
+                print(f"\n[{'FAILED' if failed else 'SUCCESS'}] requested={len(results)} "
+                      f"{'planned' if args.dry_run else 'succeeded'}={succeeded} failed={failed}", flush=True)
+                sys.exit(1 if failed else 0)
             except Exception as e:
                 logger.error(f"Remote ingestion failed: {e}")
                 sys.exit(1)
