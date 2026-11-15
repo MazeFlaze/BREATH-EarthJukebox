@@ -159,6 +159,7 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
           CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+          AZURE_STORAGE_ACCOUNT: ${{ vars.AZURE_STORAGE_ACCOUNT }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           echo "=========================================================="
@@ -209,7 +210,50 @@ jobs:
               --output table
           fi
 
-          # 2. Deploy or Update Backend Container App (Scale-to-Zero: min-replicas 0)
+          # 2. Ensure Azure Storage Account & File Share for verified GEOS-CF catalog
+          CATALOG_SHARE_NAME="geos-cf-catalog"
+          CATALOG_MOUNT_PATH="/app/data/geos-cf-catalog"
+          ENV_LOCATION=$(az containerapp env show --name "${ENVIRONMENT_NAME}" --resource-group "${RESOURCE_GROUP}" --query location -o tsv)
+          STORAGE_ACCOUNT="${AZURE_STORAGE_ACCOUNT}"
+          if [ -z "$STORAGE_ACCOUNT" ]; then
+            STORAGE_ACCOUNT=$(az storage account list --resource-group "${RESOURCE_GROUP}" --query "[?starts_with(name, 'stbreathe')].name | [0]" -o tsv 2>/dev/null || echo "")
+          fi
+          if [ -z "$STORAGE_ACCOUNT" ]; then
+            STORAGE_ACCOUNT=$(az storage account list --resource-group "${RESOURCE_GROUP}" --query "[0].name" -o tsv 2>/dev/null || echo "")
+          fi
+          if [ -z "$STORAGE_ACCOUNT" ]; then
+            STORAGE_ACCOUNT="stbreathe$(printf '%s' "${RESOURCE_GROUP}" | sha256sum | cut -c1-12)"
+            echo "Creating Azure Storage Account (${STORAGE_ACCOUNT}) in ${ENV_LOCATION}..."
+            az storage account create \
+              --name "${STORAGE_ACCOUNT}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --location "${ENV_LOCATION}" \
+              --sku Standard_LRS \
+              --kind StorageV2 \
+              --min-tls-version TLS1_2 \
+              --allow-blob-public-access false \
+              --output table
+          else
+            echo "Reusing Azure Storage Account: ${STORAGE_ACCOUNT}"
+          fi
+          STORAGE_KEY=$(az storage account keys list --account-name "${STORAGE_ACCOUNT}" --resource-group "${RESOURCE_GROUP}" --query "[0].value" -o tsv)
+          az storage share create \
+            --name "${CATALOG_SHARE_NAME}" \
+            --account-name "${STORAGE_ACCOUNT}" \
+            --account-key "${STORAGE_KEY}" \
+            --quota 10 \
+            --output none
+          az containerapp env storage set \
+            --name "${ENVIRONMENT_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --storage-name "${CATALOG_SHARE_NAME}" \
+            --azure-file-account-name "${STORAGE_ACCOUNT}" \
+            --azure-file-account-key "${STORAGE_KEY}" \
+            --azure-file-share-name "${CATALOG_SHARE_NAME}" \
+            --access-mode ReadOnly \
+            --output none
+
+          # 3. Deploy or Update Backend Container App (Scale-to-Zero: min-replicas 0)
           BACKEND_APP="breathe-backend"
           BACKEND_IMAGE="${ACR_LOGIN_SERVER}/${BACKEND_APP}:${IMAGE_TAG}"
           echo "Deploying Backend Container App (${BACKEND_APP})..."
@@ -227,7 +271,8 @@ jobs:
                 HOST="0.0.0.0" \
                 PORT="8000" \
                 ENVIRONMENT="production" \
-                DEBUG="False"
+                DEBUG="False" \
+                GEOS_CF_CATALOG_ROOT="${CATALOG_MOUNT_PATH}"
           else
             echo "Creating new Backend Container App with scale-to-zero..."
             az containerapp create \
@@ -251,7 +296,57 @@ jobs:
                 HOST="0.0.0.0" \
                 PORT="8000" \
                 ENVIRONMENT="production" \
-                DEBUG="False"
+                DEBUG="False" \
+                GEOS_CF_CATALOG_ROOT="${CATALOG_MOUNT_PATH}"
+          fi
+
+          # Ensure ReadOnly Azure File Share volume mount stays attached on breathe-backend
+          BACKEND_JSON=$(mktemp /tmp/breathe-backend-app-XXXXXX.json)
+          CATALOG_PATCH_YAML=$(mktemp /tmp/breathe-backend-mount-XXXXXX.yaml)
+          trap 'rm -f "${BACKEND_JSON}" "${CATALOG_PATCH_YAML}"' EXIT
+          az containerapp show --name "${BACKEND_APP}" --resource-group "${RESOURCE_GROUP}" -o json > "${BACKEND_JSON}"
+          export CATALOG_SHARE_NAME CATALOG_MOUNT_PATH
+          NEEDS_MOUNT=$(python3 -c '
+          import json, os, sys
+          with open(sys.argv[1], encoding="utf-8") as src_fh:
+              app = json.load(src_fh)
+          props = app.get("properties") or {}
+          template = props.get("template") or {}
+          share = os.environ["CATALOG_SHARE_NAME"]
+          mount_path = os.environ["CATALOG_MOUNT_PATH"]
+          volumes = template.get("volumes") or []
+          containers = template.get("containers") or []
+          mounts = containers[0].get("volumeMounts") or [] if containers else []
+          has_vol = any(v.get("name") == share and v.get("storageName") == share and v.get("storageType") == "AzureFile" for v in volumes)
+          has_mnt = any(m.get("volumeName") == share and m.get("mountPath") == mount_path for m in mounts)
+          if has_vol and has_mnt:
+              print("no")
+              sys.exit(0)
+          new_volumes = [v for v in volumes if v.get("name") != share]
+          new_volumes.append({"name": share, "storageType": "AzureFile", "storageName": share})
+          template["volumes"] = new_volumes
+          new_mounts = [m for m in mounts if m.get("volumeName") != share and m.get("mountPath") != mount_path]
+          new_mounts.append({"volumeName": share, "mountPath": mount_path})
+          containers[0]["volumeMounts"] = new_mounts
+          payload = {
+              "properties": {
+                  "managedEnvironmentId": props["managedEnvironmentId"],
+                  "template": {k: v for k, v in template.items() if k != "revisionSuffix" and v is not None},
+              }
+          }
+          with open(sys.argv[2], "w", encoding="utf-8") as fh:
+              json.dump(payload, fh, indent=2)
+          print("yes")
+          ' "${BACKEND_JSON}" "${CATALOG_PATCH_YAML}")
+          if [ "${NEEDS_MOUNT}" = "yes" ]; then
+            echo "Attaching ReadOnly Azure File Share (${CATALOG_SHARE_NAME} -> ${CATALOG_MOUNT_PATH})..."
+            az containerapp update \
+              --name "${BACKEND_APP}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --yaml "${CATALOG_PATCH_YAML}" \
+              --output none
+          else
+            echo "Verified catalog volume mount (${CATALOG_MOUNT_PATH}) already attached."
           fi
 
           BACKEND_FQDN=$(az containerapp show --name "${BACKEND_APP}" --resource-group "${RESOURCE_GROUP}" --query properties.configuration.ingress.fqdn -o tsv)

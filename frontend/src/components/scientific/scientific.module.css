@@ -23,7 +23,14 @@
 .mixer button { padding:6px 12px; margin:4px 4px 0 0; border:1px solid #76968b; border-radius:6px; font-size:12px; }
 .message { padding:12px; background:#e4eee5; border-radius:6px; margin:12px 0; font-size:13px; overflow-wrap:anywhere; }
 .error { background:#f7dfd8; color:#822d21; }
+.notice { display:flex; flex-direction:column; gap:10px; padding:16px; margin:16px 0; border:1px solid #9ab8a8; border-radius:12px; background:#e4eee5; color:#183f36; min-inline-size:0; }
+.noticeError { border-color:#d49b8f; background:#f7dfd8; color:#822d21; }
+.noticeTitle { margin:0; font-family:var(--ui,'Segoe UI',Arial,sans-serif); font-size:16px; font-weight:700; line-height:1.35; letter-spacing:normal; color:inherit; overflow-wrap:anywhere; }
+.noticeDetail { margin:0; font-size:13px; line-height:1.55; color:inherit; overflow-wrap:anywhere; }
+.noticeActions { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:2px; min-inline-size:0; }
+.noticeActions button { max-inline-size:100%; white-space:normal; text-align:center; min-block-size:44px; }
 .mono { font:11px/1.6 monospace; overflow-wrap:anywhere; }
 .region { margin:12px 0; }
 .picker { height:440px; position:relative; }
 @media(max-width:760px) { .grid { grid-template-columns:1fr; } .card { padding:14px; } .heading h1 { font-size:24px; } }
+@media(max-width:560px) { .notice { padding:14px; } .noticeActions { flex-direction:column; align-items:stretch; } .noticeActions button { width:100%; } }

@@ -1,5 +1,6 @@
 """Offline archive inventory and incremental export. No network or synthetic fallback."""
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -7,11 +8,15 @@ import numpy as np
 import pandas as pd
 
 from ..api.schemas.geos_cf_catalog_schema import CatalogEntry, CatalogGap, CatalogSnapshot, FocusFeature, GeosCfCatalog
-from ..api.schemas.notebook_demo_schema import NotebookDemoContract
-from ..processors.notebook_demo_processor import NotebookDemoProcessor
+from ..api.schemas.geos_cf_detail_schema import GeosCfDetail
+from ..api.schemas.notebook_demo_schema import DemoSource, NotebookDemoContract
+from ..processors.netcdf_processor import NetCDFProcessor
+from ..processors.notebook_demo_processor import POLLUTANTS, NotebookDemoProcessor
 from ..processors.notebook_demo_maps import render_maps
 from .geos_cf_detail_service import export_detail
 from ..providers.geos_cf_provenance import DownloadReceipt, NCCS_PREFIX, PRODUCT, checksum_file, inspect_asset, valid_receipt
+
+_CALIBRATION_VERSION = NotebookDemoContract.model_fields["calibration_version"].default
 
 
 def inventory(roots: list[Path], reference: NotebookDemoContract | None = None) -> tuple[list[CatalogEntry], dict[str, Path]]:
@@ -116,15 +121,87 @@ def focus_features(contract: NotebookDemoContract, fields: dict) -> dict[str, di
     return result
 
 
-def export_catalog(roots: list[Path], output: Path, reference_path: Path | None = None) -> GeosCfCatalog:
+def _has_valid_detail_cache(destination: Path, record: CatalogEntry, prefix: str) -> bool:
+    detail_path = destination / "detail.json"
+    if not detail_path.exists():
+        return False
+    try:
+        cached = GeosCfDetail.model_validate_json(detail_path.read_text(encoding="utf-8"))
+        return (
+            cached.source.sha256 == record.id
+            and cached.source.timestamp_utc == record.timestamp_utc
+            and cached.source.collection == PRODUCT
+            and cached.source.grid_shape == (721, 1440)
+            and cached.calibration_version == _CALIBRATION_VERSION
+            and set(cached.fields) == set(POLLUTANTS)
+            and all(
+                meta.unit == POLLUTANTS[key].unit
+                and meta.audio_max == POLLUTANTS[key].audio_max
+                and meta.url == f"{prefix}/native-{key}.f32"
+                and (destination / f"native-{key}.f32").stat().st_size == 721 * 1440 * 4
+                and checksum_file(destination / f"native-{key}.f32") == meta.sha256
+                for key, meta in cached.fields.items()
+            )
+        )
+    except (OSError, ValueError):
+        return False
+
+
+def _export_scientific_detail(path: Path, record: CatalogEntry, destination: Path, prefix: str) -> str:
+    """Export detail.json and native float32 grids without generating legacy PNG snapshots."""
+    if _has_valid_detail_cache(destination, record, prefix):
+        return f"{prefix}/detail.json"
+    if not record.source_url or not record.source_url.startswith(NCCS_PREFIX):
+        raise ValueError("A NASA asset requires its explicit NCCS source URL")
+    match = re.search(r"\.(\d{8})_(\d{4})z\.", path.name.lower())
+    if not match or PRODUCT not in path.name:
+        raise ValueError("NASA filename must include the collection and timestamp")
+    with NetCDFProcessor.open_dataset(path) as dataset:
+        timestamp, fields = NotebookDemoProcessor.prepare_fields(dataset)
+    expected = pd.to_datetime("".join(match.groups()), format="%Y%m%d%H%M", utc=True)
+    if pd.Timestamp(timestamp) != expected:
+        raise ValueError("Filename and NetCDF timestamps disagree")
+    if timestamp != record.timestamp_utc:
+        raise ValueError("NetCDF timestamp disagrees with catalog record")
+    first = next(iter(fields.values()))
+    contract = NotebookDemoContract(
+        isMock=False,
+        source=DemoSource(
+            provider="NASA GMAO",
+            collection=PRODUCT,
+            source_file=path.name,
+            source_url=record.source_url,
+            sha256=record.id,
+            timestamp_utc=timestamp,
+            grid_shape=first.shape,
+        ),
+        pollutants=POLLUTANTS,
+        global_plans={},
+        region_plans={},
+        map_urls={},
+    )
+    destination.mkdir(parents=True, exist_ok=True)
+    return export_detail(path, contract, destination, prefix, fields)
+
+
+def export_catalog(
+    roots: list[Path],
+    output: Path,
+    reference_path: Path | None = None,
+    *,
+    scientific_only: bool = False,
+) -> GeosCfCatalog:
     reference = NotebookDemoContract.model_validate_json(reference_path.read_text(encoding="utf-8")) if reference_path and reference_path.exists() else None
     entries, accepted = inventory(roots, reference)
     output.mkdir(parents=True, exist_ok=True)
     for index, record in enumerate([e for e in entries if e.status == "ready"]):
         print(f"Export [{index + 1}/{len(accepted)}] {record.timestamp_utc} {record.filename}", flush=True)
         destination = output / record.id
-        snapshot_path = destination / "snapshot.json"
         prefix = f"/data/{output.name}/{record.id}"
+        if scientific_only:
+            record.detail_url = _export_scientific_detail(accepted[record.id], record, destination, prefix)
+            continue
+        snapshot_path = destination / "snapshot.json"
         if snapshot_path.exists():
             try:
                 previous = CatalogSnapshot.model_validate_json(snapshot_path.read_text(encoding="utf-8"))

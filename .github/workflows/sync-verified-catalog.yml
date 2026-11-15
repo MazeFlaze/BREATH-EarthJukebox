@@ -1,0 +1,243 @@
+name: Sync Verified GEOS-CF Catalog to Azure Files
+
+on:
+  workflow_dispatch:
+    inputs:
+      latest_hours:
+        description: "Number of contiguous latest hourly (:30Z) verified NASA GEOS-CF snapshots"
+        required: true
+        default: "24"
+        type: string
+      max_probe_hours:
+        description: "Max hours to probe backward from current UTC when edge granules are unpublished"
+        required: false
+        default: "72"
+        type: string
+      scientific_only:
+        description: "Export scientific native float32 grids + detail.json only (skip legacy PNG snapshots)"
+        required: false
+        default: true
+        type: boolean
+      append:
+        description: "Append/retain older snapshots in Azure Files instead of clean mirror replace"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: breathe-sync-verified-catalog
+  cancel-in-progress: false
+
+jobs:
+  sync-catalog:
+    name: Sync Verified NASA GEOS-CF Catalog
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Validate Azure Secrets
+        run: |
+          if [ -z "${{ secrets.AZURE_CREDENTIALS }}" ]; then
+            echo "::error ::AZURE_CREDENTIALS secret is required to sync the Azure File Share."
+            exit 1
+          fi
+
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install System C-Libraries for NetCDF4 & HDF5
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libnetcdf-dev libhdf5-dev
+
+      - name: Install uv & Backend Dependencies
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "backend/requirements.txt"
+
+      - name: Install Backend Packages
+        working-directory: backend
+        run: uv pip install --system -r requirements.txt
+
+      - name: Download Verified NASA GEOS-CF Granules & Export Catalog
+        run: |
+          SYNC_FLAGS=()
+          if [ "${{ inputs.scientific_only }}" = "true" ]; then
+            SYNC_FLAGS+=(--scientific-only)
+          fi
+          if [ "${{ inputs.append }}" = "true" ]; then
+            SYNC_FLAGS+=(--append)
+          fi
+          PYTHONPATH=backend/src:backend:. python3 -m backend.scripts.sync_verified_catalog \
+            --latest-hours "${{ inputs.latest_hours }}" \
+            --max-probe-hours "${{ inputs.max_probe_hours }}" \
+            --archive-dir /tmp/geos-cf-archive \
+            --output /tmp/geos-cf-catalog \
+            "${SYNC_FLAGS[@]}"
+
+      - name: Upload Catalog to Azure File Share (Zero-Downtime Order)
+        env:
+          RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP || 'rg-breathe' }}
+          AZURE_STORAGE_ACCOUNT: ${{ vars.AZURE_STORAGE_ACCOUNT }}
+        run: |
+          CATALOG_SHARE_NAME="geos-cf-catalog"
+          ENVIRONMENT_NAME=$(az containerapp env list --resource-group "${RESOURCE_GROUP}" --query "[0].name" -o tsv 2>/dev/null || echo "")
+          ENV_LOCATION=""
+          if [ -n "${ENVIRONMENT_NAME}" ]; then
+            ENV_LOCATION=$(az containerapp env show --name "${ENVIRONMENT_NAME}" --resource-group "${RESOURCE_GROUP}" --query location -o tsv 2>/dev/null || echo "")
+          fi
+          if [ -z "${ENV_LOCATION}" ]; then
+            ENV_LOCATION=$(az group show --name "${RESOURCE_GROUP}" --query location -o tsv 2>/dev/null || echo "eastasia")
+          fi
+
+          STORAGE_ACCOUNT="${AZURE_STORAGE_ACCOUNT}"
+          if [ -z "${STORAGE_ACCOUNT}" ]; then
+            STORAGE_ACCOUNT=$(az storage account list --resource-group "${RESOURCE_GROUP}" --query "[?starts_with(name, 'stbreathe')].name | [0]" -o tsv 2>/dev/null || echo "")
+          fi
+          if [ -z "${STORAGE_ACCOUNT}" ]; then
+            STORAGE_ACCOUNT=$(az storage account list --resource-group "${RESOURCE_GROUP}" --query "[0].name" -o tsv 2>/dev/null || echo "")
+          fi
+          if [ -z "${STORAGE_ACCOUNT}" ]; then
+            STORAGE_ACCOUNT="stbreathe$(printf '%s' "${RESOURCE_GROUP}" | sha256sum | cut -c1-12)"
+            echo "Creating Azure Storage Account (${STORAGE_ACCOUNT}) in ${ENV_LOCATION}..."
+            az storage account create \
+              --name "${STORAGE_ACCOUNT}" \
+              --resource-group "${RESOURCE_GROUP}" \
+              --location "${ENV_LOCATION}" \
+              --sku Standard_LRS \
+              --kind StorageV2 \
+              --min-tls-version TLS1_2 \
+              --allow-blob-public-access false \
+              --output table
+          fi
+
+          STORAGE_KEY=$(az storage account keys list --account-name "${STORAGE_ACCOUNT}" --resource-group "${RESOURCE_GROUP}" --query "[0].value" -o tsv)
+          az storage share create \
+            --name "${CATALOG_SHARE_NAME}" \
+            --account-name "${STORAGE_ACCOUNT}" \
+            --account-key "${STORAGE_KEY}" \
+            --quota 10 \
+            --output none
+
+          # 1. Upload every verified snapshot directory before updating index.json
+          for dir in /tmp/geos-cf-catalog/*/; do
+            [ -d "$dir" ] || continue
+            hash_name=$(basename "$dir")
+            echo "Uploading snapshot ${hash_name}..."
+            az storage file upload-batch \
+              --destination "${CATALOG_SHARE_NAME}" \
+              --destination-path "${hash_name}" \
+              --source "${dir}" \
+              --account-name "${STORAGE_ACCOUNT}" \
+              --account-key "${STORAGE_KEY}" \
+              --no-progress \
+              --output none
+          done
+
+          # 2. If appending on a stateless CI runner, merge existing remote index.json entries first
+          if [ "${{ inputs.append }}" = "true" ]; then
+            if az storage file download \
+              --share-name "${CATALOG_SHARE_NAME}" \
+              --path "index.json" \
+              --dest "/tmp/remote-index.json" \
+              --account-name "${STORAGE_ACCOUNT}" \
+              --account-key "${STORAGE_KEY}" \
+              --no-progress \
+              --output none 2>/dev/null; then
+              PYTHONPATH=backend/src:backend:. python3 -c '
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+          import pandas as pd
+          from backend.src.api.schemas.geos_cf_catalog_schema import CatalogGap, GeosCfCatalog
+
+          remote = GeosCfCatalog.model_validate_json(Path("/tmp/remote-index.json").read_text(encoding="utf-8"))
+          local = GeosCfCatalog.model_validate_json(Path("/tmp/geos-cf-catalog/index.json").read_text(encoding="utf-8"))
+          by_id = {e.id: e for e in remote.entries}
+          local_ready_ts = {e.timestamp_utc for e in local.entries if e.status == "ready" and e.timestamp_utc}
+          for entry_id, existing in list(by_id.items()):
+              if existing.status == "ready" and existing.timestamp_utc in local_ready_ts:
+                  del by_id[entry_id]
+          for entry in local.entries:
+              by_id[entry.id] = entry
+          entries = sorted(by_id.values(), key=lambda e: (e.timestamp_utc or "", e.id))
+          ready = sorted((e for e in entries if e.status == "ready"), key=lambda e: e.timestamp_utc or "")
+          gaps = []
+          for first, second in zip(ready, ready[1:]):
+              hours = (pd.Timestamp(second.timestamp_utc) - pd.Timestamp(first.timestamp_utc)).total_seconds() / 3600
+              if hours > 1:
+                  gaps.append(CatalogGap(after=first.timestamp_utc, before=second.timestamp_utc, missing_hours=max(1, int(hours) - 1)))
+          merged = GeosCfCatalog(generated_at=datetime.now(timezone.utc).isoformat(), entries=entries, gaps=gaps, ready_count=len(ready))
+          Path("/tmp/geos-cf-catalog/index.json").write_text(merged.model_dump_json(indent=2), encoding="utf-8")
+          '
+            fi
+          fi
+
+          # Upload index.json atomically after all snapshot directories exist
+          az storage file upload \
+            --share-name "${CATALOG_SHARE_NAME}" \
+            --source "/tmp/geos-cf-catalog/index.json" \
+            --path "index.json" \
+            --account-name "${STORAGE_ACCOUNT}" \
+            --account-key "${STORAGE_KEY}" \
+            --no-progress \
+            --output none
+
+          # 3. In default mirror mode, prune stale 64-hex snapshot directories AFTER index.json swap
+          if [ "${{ inputs.append }}" != "true" ]; then
+            REMOTE_DIRS=$(az storage file list \
+              --share-name "${CATALOG_SHARE_NAME}" \
+              --account-name "${STORAGE_ACCOUNT}" \
+              --account-key "${STORAGE_KEY}" \
+              --query "[?isDirectory].name" -o tsv || echo "")
+            for rdir in $REMOTE_DIRS; do
+              if [ ! -d "/tmp/geos-cf-catalog/${rdir}" ] && [[ "$rdir" =~ ^[a-f0-9]{64}$ ]]; then
+                echo "Pruning stale snapshot directory: ${rdir}"
+                az storage file delete-batch \
+                  --source "${CATALOG_SHARE_NAME}/${rdir}" \
+                  --account-name "${STORAGE_ACCOUNT}" \
+                  --account-key "${STORAGE_KEY}" \
+                  --output none || true
+                az storage directory delete \
+                  --share-name "${CATALOG_SHARE_NAME}" \
+                  --name "${rdir}" \
+                  --account-name "${STORAGE_ACCOUNT}" \
+                  --account-key "${STORAGE_KEY}" \
+                  --output none || true
+              fi
+            done
+          fi
+
+      - name: Verify Live Backend Scientific Catalog Endpoint
+        env:
+          RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP || 'rg-breathe' }}
+        run: |
+          BACKEND_FQDN=$(az containerapp show --name breathe-backend --resource-group "${RESOURCE_GROUP}" --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null || echo "")
+          if [ -z "${BACKEND_FQDN}" ]; then
+            echo "::warning ::breathe-backend not found; skipping live endpoint smoke check."
+            exit 0
+          fi
+          RESPONSE=$(curl -fsS --retry 3 --retry-delay 5 "https://${BACKEND_FQDN}/api/v1/scientific/catalog")
+          READY_COUNT=$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get("ready_count", 0))' <<< "${RESPONSE}")
+          echo "Live backend /api/v1/scientific/catalog ready_count=${READY_COUNT}"
+          if [ "${READY_COUNT}" -lt 1 ]; then
+            echo "::error ::Expected ready_count >= 1 from live backend after catalog sync, got ${READY_COUNT}"
+            exit 1
+          fi
+          echo "### Sync Verified GEOS-CF Catalog Succeeded" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Catalog Endpoint:** \`https://${BACKEND_FQDN}/api/v1/scientific/catalog\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Ready Snapshots:** \`${READY_COUNT}\`" >> "$GITHUB_STEP_SUMMARY"

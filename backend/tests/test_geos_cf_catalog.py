@@ -8,17 +8,27 @@ import pytest
 import xarray as xr
 
 try:
+    from backend.src.api.schemas.notebook_demo_schema import NotebookDemoContract
+    from backend.src.api.schemas.scientific_session_schema import SessionPlan, SessionRequest
+    from backend.src.processors.netcdf_processor import NetCDFProcessor
+    from backend.src.processors.notebook_demo_processor import POLLUTANTS, NotebookDemoProcessor
     from backend.src.providers import geos_cf_provenance as provenance
     from backend.src.providers.geos_cf import GEOSCFProvider
     from backend.src.services import geos_cf_catalog_service as catalog
     from backend.src.services.ingestion_service import IngestionService
-    from backend.src.api.schemas.notebook_demo_schema import NotebookDemoContract
+    from backend.src.services.scientific_catalog_service import ScientificCatalog
+    from backend.src.services.scientific_session_service import ScientificSessionService
 except ImportError:
+    from src.api.schemas.notebook_demo_schema import NotebookDemoContract
+    from src.api.schemas.scientific_session_schema import SessionPlan, SessionRequest
+    from src.processors.netcdf_processor import NetCDFProcessor
+    from src.processors.notebook_demo_processor import POLLUTANTS, NotebookDemoProcessor
     from src.providers import geos_cf_provenance as provenance
     from src.providers.geos_cf import GEOSCFProvider
     from src.services import geos_cf_catalog_service as catalog
     from src.services.ingestion_service import IngestionService
-    from src.api.schemas.notebook_demo_schema import NotebookDemoContract
+    from src.services.scientific_catalog_service import ScientificCatalog
+    from src.services.scientific_session_service import ScientificSessionService
 
 TIMESTAMP = "2026-11-12T00:30:00Z"
 NAME = "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261112_0030z.R0.nc4"
@@ -228,3 +238,129 @@ def test_export_records_gaps_and_reuses_complete_hash_cache(tmp_path, monkeypatc
     second = catalog.export_catalog([], output, reference)
     assert len(builds) == 2 and second.ready_count == 2
     assert (output / "index.json").exists() and not (output / "index.tmp").exists()
+
+
+def _write_verified_granule(raw_dir: Path) -> Path:
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    nc_path = raw_dir / NAME
+    full_grid().to_netcdf(nc_path, engine="netcdf4")
+    provenance.write_receipt(nc_path, URL)
+    return nc_path
+
+
+def test_export_catalog_scientific_only_skips_pngs_and_passes_scientific_reader(tmp_path, monkeypatch):
+    raw_dir = tmp_path / "raw"
+    out_dir = tmp_path / "catalog"
+    nc_path = _write_verified_granule(raw_dir)
+
+    exported = catalog.export_catalog([raw_dir], out_dir, scientific_only=True)
+    assert (out_dir / "index.json").exists()
+    assert exported.ready_count == 1
+    assert len(exported.entries) == 1
+    entry = exported.entries[0]
+    assert entry.status == "ready"
+    assert entry.detail_url == f"/data/{out_dir.name}/{entry.id}/detail.json"
+    assert entry.snapshot_url is None
+
+    snapshot_dir = out_dir / entry.id
+    assert (snapshot_dir / "detail.json").exists()
+    for key in POLLUTANTS:
+        assert (snapshot_dir / f"native-{key}.f32").exists()
+    assert not (snapshot_dir / "snapshot.json").exists()
+    assert not list(out_dir.rglob("*.png"))
+
+    reader = ScientificCatalog(out_dir)
+    session_service = ScientificSessionService(reader)
+    plan = session_service.create(SessionRequest(pollutant="pm25_rh35", start=TIMESTAMP, end=TIMESTAMP))
+    assert isinstance(plan, SessionPlan)
+    assert plan.isMock is False
+    assert plan.slots[0].missing is False
+    assert plan.slots[0].source_sha256 == entry.id
+
+    # Cache hit on second scientific-only export must skip prepare_fields / export_detail / opening .nc4 for detail.
+    monkeypatch.setattr(
+        NotebookDemoProcessor,
+        "prepare_fields",
+        staticmethod(lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should reuse cached detail"))),
+    )
+    monkeypatch.setattr(
+        catalog,
+        "export_detail",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should reuse cached detail")),
+    )
+    open_calls: list[Path] = []
+    real_open = NetCDFProcessor.open_dataset
+
+    def tracked_open(cls, file_path):
+        open_calls.append(Path(file_path))
+        return real_open(file_path)
+
+    monkeypatch.setattr(NetCDFProcessor, "open_dataset", classmethod(tracked_open))
+    cached = catalog.export_catalog([raw_dir], out_dir, scientific_only=True)
+    assert cached.ready_count == 1
+    assert cached.entries[0].detail_url == entry.detail_url
+    assert cached.entries[0].snapshot_url is None
+    assert len(open_calls) == 1  # Only inventory/inspect_asset opened the NetCDF; detail export hit cache.
+
+    monkeypatch.setattr(
+        NetCDFProcessor,
+        "open_dataset",
+        classmethod(lambda cls, *args, **kwargs: (_ for _ in ()).throw(AssertionError("should reuse cached detail"))),
+    )
+    assert catalog._export_scientific_detail(nc_path, entry, snapshot_dir, f"/data/{out_dir.name}/{entry.id}") == entry.detail_url
+
+
+def test_full_export_after_scientific_only_still_generates_png_and_snapshot(tmp_path):
+    raw_dir = tmp_path / "raw"
+    out_dir = tmp_path / "catalog"
+    _write_verified_granule(raw_dir)
+
+    scientific = catalog.export_catalog([raw_dir], out_dir, scientific_only=True)
+    entry = scientific.entries[0]
+    snapshot_dir = out_dir / entry.id
+    assert entry.snapshot_url is None
+    assert not (snapshot_dir / "snapshot.json").exists()
+    assert not list(out_dir.rglob("*.png"))
+
+    full = catalog.export_catalog([raw_dir], out_dir, scientific_only=False)
+    assert full.ready_count == 1
+    full_entry = full.entries[0]
+    assert full_entry.snapshot_url == f"/data/{out_dir.name}/{full_entry.id}/snapshot.json"
+    assert full_entry.detail_url == f"/data/{out_dir.name}/{full_entry.id}/detail.json"
+    assert (snapshot_dir / "snapshot.json").exists()
+    assert (snapshot_dir / "detail.json").exists()
+    for key in POLLUTANTS:
+        assert (snapshot_dir / f"{key}.png").exists()
+        assert (snapshot_dir / f"native-{key}.f32").exists()
+
+
+def test_export_geos_cf_catalog_cli_passes_scientific_only(monkeypatch, capsys, tmp_path):
+    from importlib import import_module
+    import sys
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.syspath_prepend(str(root))
+    cli = import_module("backend.scripts.export_geos_cf_catalog")
+    calls: list[dict] = []
+
+    def fake_export(roots, output, reference_path=None, *, scientific_only=False):
+        calls.append({"roots": roots, "output": output, "reference_path": reference_path, "scientific_only": scientific_only})
+        return catalog.GeosCfCatalog(generated_at=TIMESTAMP, entries=[], gaps=[], ready_count=0)
+
+    monkeypatch.setattr(cli, "export_catalog", fake_export)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["export_geos_cf_catalog", "--raw-dir", str(tmp_path), "--output", str(tmp_path / "out")],
+    )
+    cli.main()
+    assert calls[-1]["scientific_only"] is False
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["export_geos_cf_catalog", "--raw-dir", str(tmp_path), "--output", str(tmp_path / "out"), "--scientific-only"],
+    )
+    cli.main()
+    assert calls[-1]["scientific_only"] is True
+    assert "Ready=0" in capsys.readouterr().out
+

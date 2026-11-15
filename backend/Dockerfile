@@ -39,7 +39,7 @@ COPY --from=builder /install /usr/local
 COPY --chown=appuser:appuser . /app
 
 # Ensure data storage directories exist with proper write permissions for appuser
-RUN mkdir -p /app/data/raw /app/src/data/raw /app/storage && \
+RUN mkdir -p /app/data/raw /app/data/nasa-archive /app/data/geos-cf-catalog /app/src/data/raw /app/storage && \
     chown -R appuser:appuser /app/data /app/src/data /app/storage
 
 USER appuser
@@ -49,6 +49,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app/src:/app
 ENV HOST=0.0.0.0
 ENV PORT=8000
+ENV GEOS_CF_CATALOG_ROOT=/app/data/geos-cf-catalog
 
 EXPOSE 8000
 

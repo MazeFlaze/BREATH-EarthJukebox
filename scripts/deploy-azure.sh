@@ -22,6 +22,9 @@ ACR_NAME="${ACR_NAME:-acrbreathe$RANDOM}"
 ENVIRONMENT_NAME="${CONTAINERAPPS_ENVIRONMENT:-cae-breathe}"
 BACKEND_APP_NAME="breathe-backend"
 FRONTEND_APP_NAME="breathe-frontend"
+export CATALOG_SHARE_NAME="geos-cf-catalog"
+export CATALOG_MOUNT_PATH="/app/data/geos-cf-catalog"
+STORAGE_ACCOUNT="${AZURE_STORAGE_ACCOUNT:-}"
 
 # Database Configuration (Neon Serverless PostgreSQL)
 DATABASE_URL="${DATABASE_URL:-}"
@@ -87,6 +90,40 @@ az containerapp env create \
     --location "${LOCATION}" \
     --output table
 
+# 5b. Provision Azure File Share & bind ReadOnly catalog storage to Container Apps Environment
+if [ -z "${STORAGE_ACCOUNT}" ]; then
+    STORAGE_ACCOUNT=$(az storage account list --resource-group "${RESOURCE_GROUP}" --query "[?starts_with(name, 'stbreathe')].name | [0]" -o tsv 2>/dev/null || echo "")
+fi
+if [ -z "${STORAGE_ACCOUNT}" ]; then
+    STORAGE_ACCOUNT="stbreathe$(printf '%s' "${RESOURCE_GROUP}" | sha256sum | cut -c1-12)"
+    echo "Creating Azure Storage Account (${STORAGE_ACCOUNT}) in ${LOCATION}..."
+    az storage account create \
+        --name "${STORAGE_ACCOUNT}" \
+        --resource-group "${RESOURCE_GROUP}" \
+        --location "${LOCATION}" \
+        --sku Standard_LRS \
+        --kind StorageV2 \
+        --min-tls-version TLS1_2 \
+        --allow-blob-public-access false \
+        --output table
+fi
+STORAGE_KEY=$(az storage account keys list --account-name "${STORAGE_ACCOUNT}" --resource-group "${RESOURCE_GROUP}" --query "[0].value" -o tsv)
+az storage share create \
+    --name "${CATALOG_SHARE_NAME}" \
+    --account-name "${STORAGE_ACCOUNT}" \
+    --account-key "${STORAGE_KEY}" \
+    --quota 10 \
+    --output none
+az containerapp env storage set \
+    --name "${ENVIRONMENT_NAME}" \
+    --resource-group "${RESOURCE_GROUP}" \
+    --storage-name "${CATALOG_SHARE_NAME}" \
+    --azure-file-account-name "${STORAGE_ACCOUNT}" \
+    --azure-file-account-key "${STORAGE_KEY}" \
+    --azure-file-share-name "${CATALOG_SHARE_NAME}" \
+    --access-mode ReadOnly \
+    --output none
+
 # 6. Deploy Backend Container App (Scale-to-Zero: min-replicas 0)
 echo "Deploying Backend Container App (${BACKEND_APP_NAME})..."
 az containerapp create \
@@ -108,9 +145,38 @@ az containerapp create \
         PORT="8000" \
         ENVIRONMENT="production" \
         DEBUG="False" \
+        GEOS_CF_CATALOG_ROOT="${CATALOG_MOUNT_PATH}" \
         DATABASE_URL="${DATABASE_URL}" \
         DATABASE_URL_UNPOOLED="${DATABASE_URL_UNPOOLED}" \
     --output table
+
+CATALOG_PATCH_YAML=$(mktemp /tmp/breathe-backend-mount-XXXXXX.yaml)
+trap 'rm -f "${CATALOG_PATCH_YAML}"' EXIT
+az containerapp show --name "${BACKEND_APP_NAME}" --resource-group "${RESOURCE_GROUP}" -o json | python3 -c '
+import json, os, sys
+app = json.load(sys.stdin)
+props = app.get("properties") or {}
+template = props.get("template") or {}
+share = os.environ["CATALOG_SHARE_NAME"]
+mount_path = os.environ["CATALOG_MOUNT_PATH"]
+volumes = [v for v in (template.get("volumes") or []) if v.get("name") != share]
+volumes.append({"name": share, "storageType": "AzureFile", "storageName": share})
+template["volumes"] = volumes
+containers = template.get("containers") or []
+if not containers:
+    raise SystemExit("Backend container definition missing")
+mounts = [m for m in (containers[0].get("volumeMounts") or []) if m.get("volumeName") != share and m.get("mountPath") != mount_path]
+mounts.append({"volumeName": share, "mountPath": mount_path})
+containers[0]["volumeMounts"] = mounts
+payload = {"properties": {"managedEnvironmentId": props["managedEnvironmentId"], "template": {k: v for k, v in template.items() if k != "revisionSuffix" and v is not None}}}
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump(payload, fh, indent=2)
+' "${CATALOG_PATCH_YAML}"
+CATALOG_SHARE_NAME="${CATALOG_SHARE_NAME}" CATALOG_MOUNT_PATH="${CATALOG_MOUNT_PATH}" az containerapp update \
+    --name "${BACKEND_APP_NAME}" \
+    --resource-group "${RESOURCE_GROUP}" \
+    --yaml "${CATALOG_PATCH_YAML}" \
+    --output none
 
 BACKEND_FQDN=$(az containerapp show --name "${BACKEND_APP_NAME}" --resource-group "${RESOURCE_GROUP}" --query "properties.configuration.ingress.fqdn" -o tsv)
 BACKEND_URL="https://${BACKEND_FQDN}"
