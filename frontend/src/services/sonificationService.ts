@@ -14,6 +14,16 @@ export interface ScanVoiceInput {
   isAccent: boolean;
 }
 
+export interface AudioVisualFrame {
+  playbackState: PlaybackState;
+  activeCompositionId: string | null;
+  progress: number;
+  rms: number;
+  spectralCentroid: number;
+  waveformSamples: readonly number[];
+  spectrumBins: readonly number[];
+}
+
 const STEPS = 16;
 
 const KEY_SCALES: Record<string, number[]> = {
@@ -140,6 +150,17 @@ export class SonificationService {
 
   private timeDomainBuf: Float32Array<ArrayBuffer> | null = null;
   private freqDomainBuf: Uint8Array<ArrayBuffer> | null = null;
+  private visualWaveform: number[] = new Array(64).fill(0);
+  private visualSpectrum: number[] = new Array(32).fill(0);
+  private visualFrame: AudioVisualFrame = {
+    playbackState: "idle",
+    activeCompositionId: null,
+    progress: 0,
+    rms: 0,
+    spectralCentroid: 0.4,
+    waveformSamples: this.visualWaveform,
+    spectrumBins: this.visualSpectrum,
+  };
   private clockState: AudioClockState = {
     activeCompositionId: null,
     activeTitle: "Northern Vietnam",
@@ -152,14 +173,15 @@ export class SonificationService {
     rms: 0,
     spectralCentroid: 0.4,
     activeFrequencyHz: 261.63,
-    waveformSamples: new Array(64).fill(0),
-    spectrumBins: new Array(32).fill(0),
+    waveformSamples: this.visualWaveform,
+    spectrumBins: this.visualSpectrum,
     scheduleMatrix: [new Array(16).fill(0.2), new Array(16).fill(0.2), new Array(16).fill(0.2)],
   };
 
   private stateListeners = new Set<(state: PlaybackState) => void>();
   private telemetryListeners = new Set<(telemetry: AudioTelemetry) => void>();
   private clockListeners = new Set<(clock: AudioClockState) => void>();
+  private visualListeners = new Set<(frame: AudioVisualFrame) => void>();
 
   public onStateChange(listener: (state: PlaybackState) => void): () => void {
     this.stateListeners.add(listener);
@@ -178,6 +200,19 @@ export class SonificationService {
     return () => this.clockListeners.delete(listener);
   }
 
+  /**
+   * Subscribes canvas/DOM-ref visualizers to 60fps analyser frames without triggering React state updates.
+   */
+  public onVisualTick(listener: (frame: AudioVisualFrame) => void): () => void {
+    this.visualListeners.add(listener);
+    listener(this.visualFrame);
+    return () => this.visualListeners.delete(listener);
+  }
+
+  public getVisualFrame(): AudioVisualFrame {
+    return this.visualFrame;
+  }
+
   public getState(): PlaybackState {
     return this.playbackState;
   }
@@ -192,13 +227,19 @@ export class SonificationService {
 
   private setState(next: PlaybackState) {
     this.playbackState = next;
+    this.visualFrame.playbackState = next;
     this.clockState = { ...this.clockState, playbackState: next };
     this.stateListeners.forEach((fn) => fn(next));
     this.emitClock();
+    this.emitVisuals();
   }
 
   private emitClock() {
     this.clockListeners.forEach((fn) => fn(this.clockState));
+  }
+
+  private emitVisuals() {
+    this.visualListeners.forEach((fn) => fn(this.visualFrame));
   }
 
   private emitTelemetry(freq: number, normalizedValue: number) {
@@ -377,9 +418,21 @@ export class SonificationService {
       osc2.stop(when + 0.3);
     }
 
-    this.clockState.activeFrequencyHz = Number(noteFreq.toFixed(1));
-    this.clockState.currentStep = step;
-    this.clockState.activeSlot = Math.floor(step / 2) % Math.max(1, spec.series.length || 8);
+    const nextFreq = Number(noteFreq.toFixed(1));
+    const nextSlot = Math.floor(step / 2) % Math.max(1, spec.series.length || 8);
+    if (
+      this.clockState.currentStep !== step ||
+      this.clockState.activeSlot !== nextSlot ||
+      this.clockState.activeFrequencyHz !== nextFreq
+    ) {
+      this.clockState = {
+        ...this.clockState,
+        activeFrequencyHz: nextFreq,
+        currentStep: step,
+        activeSlot: nextSlot,
+      };
+      this.emitClock();
+    }
     this.emitTelemetry(noteFreq, norm);
   }
 
@@ -390,6 +443,7 @@ export class SonificationService {
 
     this.nextNoteTime = ctx.currentTime + 0.03;
     this.lastFrameMs = performance.now();
+    let lastEmittedSecond = Math.floor(this.elapsedSec);
 
     this.schedulerTimer = window.setInterval(() => {
       if (this.playbackState !== "playing" || !this.ctx || !this.activeSpec) return;
@@ -408,11 +462,10 @@ export class SonificationService {
       this.lastFrameMs = nowMs;
       const total = this.clockState.totalSec || 30;
       this.elapsedSec = (this.elapsedSec + dt) % total;
+      const progress = this.elapsedSec / total;
 
       let rms = 0;
       let centroid = 0.4;
-      let waveformSamples = this.clockState.waveformSamples;
-      let spectrumBins = this.clockState.spectrumBins;
 
       if (this.analyser && this.timeDomainBuf && this.freqDomainBuf) {
         this.analyser.getFloatTimeDomainData(this.timeDomainBuf);
@@ -420,40 +473,44 @@ export class SonificationService {
 
         let sqSum = 0;
         const stepT = Math.max(1, Math.floor(this.timeDomainBuf.length / 64));
-        const wf: number[] = [];
         for (let i = 0; i < 64; i += 1) {
           const sample = this.timeDomainBuf[Math.min(this.timeDomainBuf.length - 1, i * stepT)];
-          wf.push(Math.max(-1, Math.min(1, sample * 2.8)));
+          this.visualWaveform[i] = Math.max(-1, Math.min(1, sample * 2.8));
           sqSum += sample * sample;
         }
-        waveformSamples = wf;
         rms = Math.min(1, Math.sqrt(sqSum / 64) * 3.8);
 
         let weightedIdx = 0;
         let magSum = 0;
-        const bins: number[] = [];
         const usable = Math.min(96, this.freqDomainBuf.length);
         const stepF = Math.max(1, Math.floor(usable / 32));
         for (let i = 0; i < 32; i += 1) {
           const mag = this.freqDomainBuf[Math.min(usable - 1, i * stepF)] / 255;
-          bins.push(mag);
+          this.visualSpectrum[i] = mag;
           weightedIdx += mag * i;
           magSum += mag;
         }
-        spectrumBins = bins;
         centroid = magSum > 0.01 ? clamp01(weightedIdx / (magSum * 31)) : 0.35;
       }
 
-      this.clockState = {
-        ...this.clockState,
-        elapsedSec: this.elapsedSec,
-        progress: this.elapsedSec / total,
-        rms,
-        spectralCentroid: centroid,
-        waveformSamples,
-        spectrumBins,
-      };
-      this.emitClock();
+      this.visualFrame.playbackState = this.playbackState;
+      this.visualFrame.activeCompositionId = this.clockState.activeCompositionId;
+      this.visualFrame.progress = progress;
+      this.visualFrame.rms = rms;
+      this.visualFrame.spectralCentroid = centroid;
+      this.emitVisuals();
+
+      this.clockState.elapsedSec = this.elapsedSec;
+      this.clockState.progress = progress;
+      this.clockState.rms = rms;
+      this.clockState.spectralCentroid = centroid;
+
+      const wholeSecond = Math.floor(this.elapsedSec);
+      if (wholeSecond !== lastEmittedSecond) {
+        lastEmittedSecond = wholeSecond;
+        this.clockState = { ...this.clockState };
+        this.emitClock();
+      }
       this.rafId = window.requestAnimationFrame(tickVisuals);
     };
 
@@ -477,9 +534,20 @@ export class SonificationService {
     const totalSec = spec.durationSec ?? 30;
     const idleWave = buildStaticWaveform(spec, 64);
 
+    this.config.volume = spec.mapping.volume;
+    this.config.waveform = spec.mapping.waveform;
+
     if (this.masterGain && this.ctx) {
       this.masterGain.gain.setTargetAtTime(spec.mapping.volume * 0.42, this.ctx.currentTime, 0.05);
     }
+
+    if (this.playbackState !== "playing") {
+      for (let i = 0; i < 64; i += 1) {
+        this.visualWaveform[i] = idleWave[i] ?? 0;
+      }
+      this.visualFrame.progress = 0;
+    }
+    this.visualFrame.activeCompositionId = spec.id;
 
     this.clockState = {
       ...this.clockState,
@@ -487,9 +555,10 @@ export class SonificationService {
       activeTitle: spec.title,
       totalSec,
       scheduleMatrix: matrix,
-      waveformSamples: this.playbackState === "playing" ? this.clockState.waveformSamples : idleWave,
+      waveformSamples: this.visualWaveform,
     };
     this.emitClock();
+    this.emitVisuals();
   }
 
   public playComposition(spec: AudioCompositionSpec): void {
@@ -526,17 +595,20 @@ export class SonificationService {
     this.stepCursor = safe;
     const total = this.clockState.totalSec || 30;
     this.elapsedSec = (safe / STEPS) * total;
+    const progress = safe / STEPS;
+    this.visualFrame.progress = progress;
     this.clockState = {
       ...this.clockState,
       currentStep: safe,
       activeSlot: Math.floor(safe / 2) % 8,
       elapsedSec: this.elapsedSec,
-      progress: safe / STEPS,
+      progress,
     };
     if (this.playbackState === "playing" && this.activeSpec && this.ctx) {
       this.triggerStepVoice(this.ctx.currentTime + 0.01, safe, this.activeSpec);
     }
     this.emitClock();
+    this.emitVisuals();
   }
 
   /** Legacy single-point tone API preserved for compatibility with AudioPlayer & tests. */
@@ -603,6 +675,13 @@ export class SonificationService {
     this.stopDrone();
     this.stepCursor = 0;
     this.elapsedSec = 0;
+    const idleWave = this.activeSpec ? buildStaticWaveform(this.activeSpec, 64) : null;
+    for (let i = 0; i < 64; i += 1) {
+      this.visualWaveform[i] = idleWave ? (idleWave[i] ?? 0) : 0;
+    }
+    this.visualSpectrum.fill(0);
+    this.visualFrame.progress = 0;
+    this.visualFrame.rms = 0;
     this.clockState = {
       ...this.clockState,
       currentStep: 0,
@@ -610,8 +689,8 @@ export class SonificationService {
       progress: 0,
       elapsedSec: 0,
       rms: 0,
-      waveformSamples: this.activeSpec ? buildStaticWaveform(this.activeSpec, 64) : new Array(64).fill(0),
-      spectrumBins: new Array(32).fill(0),
+      waveformSamples: this.visualWaveform,
+      spectrumBins: this.visualSpectrum,
     };
     this.setState("idle");
   }

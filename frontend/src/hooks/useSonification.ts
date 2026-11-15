@@ -39,6 +39,43 @@ export function useAudioClock(): AudioClockState {
   return clock;
 }
 
+/**
+ * Subscribes only to structural audio metadata (playback state, track id, step schedule),
+ * preventing high-frequency visualizers from re-rendering React on elapsed-time or step ticks.
+ */
+export function useAudioClockMeta(): {
+  playbackState: PlaybackState;
+  activeCompositionId: string | null;
+  scheduleMatrix: number[][];
+} {
+  const [meta, setMeta] = useState(() => {
+    const c = sonificationService.getClockState();
+    return {
+      playbackState: c.playbackState,
+      activeCompositionId: c.activeCompositionId,
+      scheduleMatrix: c.scheduleMatrix,
+    };
+  });
+
+  useEffect(() => {
+    return sonificationService.onClockTick((c) => {
+      setMeta((prev) =>
+        prev.playbackState === c.playbackState &&
+        prev.activeCompositionId === c.activeCompositionId &&
+        prev.scheduleMatrix === c.scheduleMatrix
+          ? prev
+          : {
+              playbackState: c.playbackState,
+              activeCompositionId: c.activeCompositionId,
+              scheduleMatrix: c.scheduleMatrix,
+            }
+      );
+    });
+  }, []);
+
+  return meta;
+}
+
 export function useSonification(): UseSonificationReturn {
   const [playbackState, setPlaybackState] = useState<PlaybackState>(() =>
     sonificationService.getState()

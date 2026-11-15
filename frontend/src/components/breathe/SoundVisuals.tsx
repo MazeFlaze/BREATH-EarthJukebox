@@ -2,8 +2,12 @@
 
 import React, { useEffect, useMemo, useRef } from "react";
 import { Pause, Play, SkipBack, SkipForward, Volume2 } from "lucide-react";
-import { useAudioClock, useSonification } from "@/hooks/useSonification";
-import { buildStaticWaveform, computeScheduleMatrix } from "@/services/sonificationService";
+import { useAudioClockMeta, useSonification } from "@/hooks/useSonification";
+import {
+  buildStaticWaveform,
+  computeScheduleMatrix,
+  sonificationService,
+} from "@/services/sonificationService";
 import type { AudioCompositionSpec } from "@/types/breathe";
 
 function formatClock(sec: number): string {
@@ -23,23 +27,64 @@ export function Waveform({
   seed?: number;
 }) {
   void _seed;
-  const clock = useAudioClock();
-  const isPlayingHere =
-    clock.playbackState === "playing" &&
-    (!spec || clock.activeCompositionId === spec.id);
+  const meta = useAudioClockMeta();
+  const count = compact ? 34 : 52;
+  const barRefs = useRef<Array<HTMLSpanElement | null>>([]);
 
-  const bars = useMemo(() => {
-    const count = compact ? 34 : 52;
-    if (isPlayingHere && clock.waveformSamples.length > 0) {
-      return clock.waveformSamples.slice(0, count).map((v) => Math.max(0.14, Math.abs(v)));
-    }
+  const staticBars = useMemo(() => {
     if (spec) {
       return buildStaticWaveform(spec, count).map((v) => Math.max(0.14, Math.abs(v)));
     }
-    return clock.waveformSamples.slice(0, count).map((v) => Math.max(0.14, Math.abs(v)));
-  }, [isPlayingHere, clock.waveformSamples, spec, compact]);
+    const matrix = meta.scheduleMatrix;
+    return Array.from({ length: count }, (_, i) => {
+      const stepIdx = Math.min(15, Math.floor((i / Math.max(1, count)) * 16));
+      const amp =
+        (matrix[0]?.[stepIdx] ?? 0.25) * 0.45 +
+        (matrix[1]?.[stepIdx] ?? 0.25) * 0.35 +
+        (matrix[2]?.[stepIdx] ?? 0.2) * 0.25;
+      return Math.max(0.14, Math.min(1, amp));
+    });
+  }, [spec, count, meta.scheduleMatrix]);
 
-  const progress = isPlayingHere ? clock.progress : 0;
+  useEffect(() => {
+    const applyStatic = () => {
+      const wave = spec ? staticBars : sonificationService.getVisualFrame().waveformSamples;
+      for (let i = 0; i < count; i += 1) {
+        const el = barRefs.current[i];
+        if (!el) continue;
+        const amp = Math.max(0.14, Math.abs(wave[i] ?? staticBars[i] ?? 0.2));
+        el.style.height = `${Math.round(16 + Math.min(1, amp) * 80)}%`;
+        el.style.opacity = String(Number((0.46 + amp * 0.44).toFixed(4)));
+        el.classList.remove("is-played");
+      }
+    };
+
+    applyStatic();
+    let wasPlaying = false;
+
+    return sonificationService.onVisualTick((frame) => {
+      const playingThis =
+        frame.playbackState === "playing" && (!spec || frame.activeCompositionId === spec.id);
+      if (!playingThis) {
+        if (wasPlaying) {
+          wasPlaying = false;
+          applyStatic();
+        }
+        return;
+      }
+
+      wasPlaying = true;
+      for (let i = 0; i < count; i += 1) {
+        const el = barRefs.current[i];
+        if (!el) continue;
+        const amp = Math.max(0.14, Math.abs(frame.waveformSamples[i] ?? 0));
+        const pct = i / Math.max(1, count - 1);
+        el.style.height = `${Math.round(16 + Math.min(1, amp) * 80)}%`;
+        el.style.opacity = String(Number((0.58 + amp * 0.42).toFixed(4)));
+        el.classList.toggle("is-played", pct <= frame.progress);
+      }
+    });
+  }, [count, spec, staticBars]);
 
   return (
     <div
@@ -47,23 +92,65 @@ export function Waveform({
       role="img"
       aria-label="Real-time atmospheric waveform visualizer"
     >
-      {bars.map((amp, i) => {
-        const pct = i / Math.max(1, bars.length - 1);
-        const passed = isPlayingHere && pct <= progress;
+      {staticBars.map((amp, i) => {
         const heightPct = Math.round(16 + Math.min(1, amp) * 80);
+        const opacity = Number((0.46 + amp * 0.44).toFixed(4));
         return (
           <span
             key={i}
-            className={passed ? "is-played" : undefined}
+            ref={(el) => {
+              barRefs.current[i] = el;
+            }}
             style={{
               height: `${heightPct}%`,
-              opacity: isPlayingHere ? 0.58 + amp * 0.42 : 0.46 + amp * 0.44,
+              opacity,
             }}
           />
         );
       })}
     </div>
   );
+}
+
+function drawSpectrogramCanvas(
+  canvas: HTMLCanvasElement,
+  history: number[][],
+  compact: boolean
+): void {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.fillStyle = "#18302f";
+  ctx.fillRect(0, 0, w, h);
+
+  const cols = history.length;
+  const bins = history[0]?.length ?? 20;
+  const cellW = w / cols;
+  const cellH = h / bins;
+
+  for (let x = 0; x < cols; x += 1) {
+    const col = history[x];
+    for (let b = 0; b < bins; b += 1) {
+      const val = col[b] ?? 0;
+      const y = h - (b + 1) * cellH;
+      const r = Math.round(28 + val * 185);
+      const g = Math.round(62 + val * 138);
+      const bl = Math.round(58 + val * 98);
+      const a = Math.max(0.12, Math.min(0.95, val * 0.92));
+      ctx.fillStyle = `rgba(${r}, ${g}, ${bl}, ${a})`;
+      ctx.fillRect(x * cellW, y, cellW + 0.6, cellH + 0.4);
+    }
+  }
+
+  if (!compact) {
+    ctx.fillStyle = "rgba(246, 245, 240, 0.56)";
+    ctx.font = "500 10px Inter, sans-serif";
+    ctx.fillText("2.4 kHz", 8, 14);
+    ctx.fillText("800 Hz", 8, h * 0.52);
+    ctx.fillText("180 Hz", 8, h - 8);
+  }
 }
 
 export function Spectrogram({
@@ -74,13 +161,10 @@ export function Spectrogram({
   compact?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const clock = useAudioClock();
-  const isPlayingHere =
-    clock.playbackState === "playing" &&
-    (!spec || clock.activeCompositionId === spec.id);
+  const meta = useAudioClockMeta();
 
   const staticSpectrum = useMemo(() => {
-    const matrix = spec ? computeScheduleMatrix(spec) : clock.scheduleMatrix;
+    const matrix = spec ? computeScheduleMatrix(spec) : meta.scheduleMatrix;
     const cols = 48;
     const bins = 20;
     const result: number[][] = [];
@@ -101,60 +185,49 @@ export function Spectrogram({
       result.push(col);
     }
     return result;
-  }, [spec, clock.scheduleMatrix]);
+  }, [spec, meta.scheduleMatrix]);
 
-  const scrollHistoryRef = useRef<number[][]>(staticSpectrum);
+  const scrollHistoryRef = useRef<number[][]>(staticSpectrum.slice());
 
   useEffect(() => {
-    if (isPlayingHere && clock.spectrumBins.length > 0) {
-      const sampled: number[] = [];
-      for (let b = 0; b < 20; b += 1) {
-        const idx = Math.floor((b / 20) * Math.min(28, clock.spectrumBins.length));
-        sampled.push(clock.spectrumBins[idx] ?? 0);
+    scrollHistoryRef.current = staticSpectrum.slice();
+    const initialCanvas = canvasRef.current;
+    if (initialCanvas) {
+      drawSpectrogramCanvas(initialCanvas, scrollHistoryRef.current, compact);
+    }
+
+    let wasPlaying = false;
+    return sonificationService.onVisualTick((frame) => {
+      const playingThis =
+        frame.playbackState === "playing" && (!spec || frame.activeCompositionId === spec.id);
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      if (!playingThis) {
+        if (wasPlaying) {
+          wasPlaying = false;
+          scrollHistoryRef.current = staticSpectrum.slice();
+          drawSpectrogramCanvas(canvas, scrollHistoryRef.current, compact);
+        }
+        return;
       }
-      scrollHistoryRef.current = [...scrollHistoryRef.current.slice(1), sampled];
-    } else if (!isPlayingHere) {
-      scrollHistoryRef.current = staticSpectrum;
-    }
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const w = canvas.width;
-    const h = canvas.height;
-    ctx.fillStyle = "#18302f";
-    ctx.fillRect(0, 0, w, h);
-
-    const history = scrollHistoryRef.current;
-    const cols = history.length;
-    const bins = history[0]?.length ?? 20;
-    const cellW = w / cols;
-    const cellH = h / bins;
-
-    for (let x = 0; x < cols; x += 1) {
-      const col = history[x];
-      for (let b = 0; b < bins; b += 1) {
-        const val = col[b] ?? 0;
-        const y = h - (b + 1) * cellH;
-        const r = Math.round(28 + val * 185);
-        const g = Math.round(62 + val * 138);
-        const bl = Math.round(58 + val * 98);
-        const a = Math.max(0.12, Math.min(0.95, val * 0.92));
-        ctx.fillStyle = `rgba(${r}, ${g}, ${bl}, ${a})`;
-        ctx.fillRect(x * cellW, y, cellW + 0.6, cellH + 0.4);
+      if (frame.spectrumBins.length > 0) {
+        wasPlaying = true;
+        const sampled: number[] = [];
+        for (let b = 0; b < 20; b += 1) {
+          const idx = Math.floor((b / 20) * Math.min(28, frame.spectrumBins.length));
+          sampled.push(frame.spectrumBins[idx] ?? 0);
+        }
+        const history = scrollHistoryRef.current;
+        if (history.length >= 48) {
+          history.shift();
+        }
+        history.push(sampled);
+        drawSpectrogramCanvas(canvas, history, compact);
       }
-    }
-
-    if (!compact) {
-      ctx.fillStyle = "rgba(246, 245, 240, 0.56)";
-      ctx.font = "500 10px Inter, sans-serif";
-      ctx.fillText("2.4 kHz", 8, 14);
-      ctx.fillText("800 Hz", 8, h * 0.52);
-      ctx.fillText("180 Hz", 8, h - 8);
-    }
-  }, [isPlayingHere, clock.spectrumBins, staticSpectrum, compact]);
+    });
+  }, [spec, staticSpectrum, compact]);
 
   return (
     <div
@@ -232,17 +305,12 @@ export function RhythmGrid({
 
 export function ParticleField({ spec }: { spec?: AudioCompositionSpec }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const clock = useAudioClock();
+  const meta = useAudioClockMeta();
 
   const density = spec?.mapping.density ?? 0.6;
   const brightness = spec?.mapping.brightness ?? 0.5;
-  const rmsRef = useRef(clock.rms);
-  const centroidRef = useRef(clock.spectralCentroid);
-  const playingRef = useRef(clock.playbackState === "playing");
-
-  rmsRef.current = clock.rms;
-  centroidRef.current = clock.spectralCentroid;
-  playingRef.current = clock.playbackState === "playing";
+  const isPlayingThis =
+    meta.playbackState === "playing" && (!spec || meta.activeCompositionId === spec.id);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -268,8 +336,11 @@ export function ParticleField({ spec }: { spec?: AudioCompositionSpec }) {
     let raf = 0;
     const draw = (timeMs: number) => {
       const t = timeMs / 1000;
-      const rms = playingRef.current ? rmsRef.current : 0.14;
-      const bright = playingRef.current ? centroidRef.current : brightness;
+      const frame = sonificationService.getVisualFrame();
+      const playingNow =
+        frame.playbackState === "playing" && (!spec || frame.activeCompositionId === spec.id);
+      const rms = playingNow ? frame.rms : 0.14;
+      const bright = playingNow ? frame.spectralCentroid : brightness;
 
       ctx.fillStyle = "#123331";
       ctx.fillRect(0, 0, w, h);
@@ -294,7 +365,7 @@ export function ParticleField({ spec }: { spec?: AudioCompositionSpec }) {
         ctx.fill();
       }
 
-      if (!reducedMotion && (playingRef.current || timeMs < 500)) {
+      if (!reducedMotion && (playingNow || timeMs < 500)) {
         raf = window.requestAnimationFrame(draw);
       }
     };
@@ -303,7 +374,7 @@ export function ParticleField({ spec }: { spec?: AudioCompositionSpec }) {
     return () => {
       if (raf) window.cancelAnimationFrame(raf);
     };
-  }, [density, brightness, clock.playbackState]);
+  }, [density, brightness, isPlayingThis, spec]);
 
   return (
     <div
