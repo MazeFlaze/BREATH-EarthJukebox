@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowRight,
@@ -52,6 +52,7 @@ export default function GalleryPage() {
   const router = useRouter();
   const { savedWorks, bookmarkedIds, toggleBookmark, loadWorkContext } = useBreathe();
   const { playbackState, clock, playComposition, pause } = useSonification();
+  const [, startTransition] = useTransition();
 
   const [tab, setTab] = useState<"curated" | "trending" | "recent" | "mine">("curated");
   const [query, setQuery] = useState("");
@@ -191,7 +192,7 @@ export default function GalleryPage() {
                   role="tab"
                   aria-selected={tab === item.key}
                   className={tab === item.key ? "is-active" : undefined}
-                  onClick={() => setTab(item.key as typeof tab)}
+                  onClick={() => startTransition(() => setTab(item.key as typeof tab))}
                 >
                   {item.label}
                 </button>

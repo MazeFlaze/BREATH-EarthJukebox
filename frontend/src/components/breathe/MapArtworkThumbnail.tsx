@@ -65,19 +65,39 @@ export const MapArtworkThumbnail = React.memo(function MapArtworkThumbnail({
     const canvas = canvasRef.current;
     if (!canvas) return;
     const controller = new AbortController();
-    void renderMapSnapshotToCanvas(canvas, {
-      center,
-      zoom,
-      polygon,
-      boundaryGeometry,
-      territoryCode,
-      variable,
-      timeIndex,
-      seriesPreview,
-      signal: controller.signal,
-    });
+    const startRender = () => {
+      void renderMapSnapshotToCanvas(canvas, {
+        center,
+        zoom,
+        polygon,
+        boundaryGeometry,
+        territoryCode,
+        variable,
+        timeIndex,
+        seriesPreview,
+        signal: controller.signal,
+      });
+    };
+
+    // Defer thumbnail rendering until browser idle so page transition compositor remains at 60fps
+    let cancelIdle: (() => void) | null = null;
+    if (typeof window !== "undefined") {
+      const win = window as Window & {
+        requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+        cancelIdleCallback?: (id: number) => void;
+      };
+      if (typeof win.requestIdleCallback === "function") {
+        const id = win.requestIdleCallback(startRender, { timeout: 900 });
+        cancelIdle = () => win.cancelIdleCallback?.(id);
+      } else {
+        const timer = window.setTimeout(startRender, 80);
+        cancelIdle = () => window.clearTimeout(timer);
+      }
+    }
+
     return () => {
       controller.abort();
+      cancelIdle?.();
     };
   }, [shouldRender, center, zoom, polygon, boundaryGeometry, territoryCode, variable, timeIndex, seriesPreview]);
 
