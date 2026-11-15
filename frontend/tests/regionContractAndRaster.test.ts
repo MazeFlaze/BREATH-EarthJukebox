@@ -283,6 +283,43 @@ describe("Frontend Region API Contract & Raster Decode Tests", () => {
       assert.equal(capturedBody.bounds.latMin, 14);
       assert.equal(capturedBody.bounds.latMax, 16);
     });
+
+    it("rejects immediately on aborted signal and aborts mid-flight fetch without tripping circuit breaker", async () => {
+      process.env.NEXT_PUBLIC_BACKEND_URL = "http://mock-backend:8000";
+
+      const preAborted = new AbortController();
+      preAborted.abort();
+      let fetchCalls = 0;
+      globalThis.fetch = async () => {
+        fetchCalls += 1;
+        return new Response("{}", { status: 200 });
+      };
+
+      await assert.rejects(
+        () => fetchBackendRegionStats("NO2", 0, sampleBounds, samplePolygon, undefined, preAborted.signal),
+        (err: Error) => err.name === "AbortError"
+      );
+      assert.equal(fetchCalls, 0, "Pre-aborted signal must skip network call");
+      assert.equal(getBackendCircuitBreakerUntil(), 0, "Abort must not trip circuit breaker");
+
+      const midFlight = new AbortController();
+      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true }
+          );
+          setTimeout(() => midFlight.abort(), 5);
+        });
+      };
+
+      await assert.rejects(
+        () => fetchBackendRegionStats("NO2", 0, sampleBounds, samplePolygon, undefined, midFlight.signal),
+        (err: Error) => err.name === "AbortError"
+      );
+      assert.equal(getBackendCircuitBreakerUntil(), 0, "Mid-flight abort must not trip circuit breaker");
+    });
   });
 
   describe("3. samplePolygonSeries() diurnal series & fallback", () => {
@@ -384,6 +421,45 @@ describe("Frontend Region API Contract & Raster Decode Tests", () => {
       assert.equal(fetchCalled, false);
       assert.deepEqual(series, [0, 0, 0, 0, 0, 0, 0, 0]);
     });
+
+    it("returns empty series immediately when AbortSignal cancels mid-flight without tripping circuit breaker", async () => {
+      process.env.NEXT_PUBLIC_BACKEND_URL = "http://mock-backend:8000";
+
+      const preAborted = new AbortController();
+      preAborted.abort();
+      const early = await samplePolygonSeries(
+        "PM25_RH35",
+        samplePolygon,
+        undefined,
+        sampleBounds,
+        undefined,
+        preAborted.signal
+      );
+      assert.deepEqual(early, []);
+
+      const midFlight = new AbortController();
+      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true }
+          );
+          setTimeout(() => midFlight.abort(), 5);
+        });
+      };
+
+      const abortedSeries = await samplePolygonSeries(
+        "PM25_RH35",
+        samplePolygon,
+        undefined,
+        sampleBounds,
+        undefined,
+        midFlight.signal
+      );
+      assert.deepEqual(abortedSeries, []);
+      assert.equal(getBackendCircuitBreakerUntil(), 0, "Aborted series request must not trip circuit breaker");
+    });
   });
 
   describe("4. Raster decode resolution (2048px cap)", () => {
@@ -403,6 +479,71 @@ describe("Frontend Region API Contract & Raster Decode Tests", () => {
 
       assert.ok(!content.includes("loadRasterPixels(imageUrl, 1280)"), "raster-tile-worker.js must not use 1280");
       assert.ok(content.includes("loadRasterPixels(imageUrl, 2048)"), "raster-tile-worker.js must use 2048");
+    });
+
+    it("smoothDisplayNorms dissolves sharp block edges into continuous gradients while preserving masks", () => {
+      const { smoothDisplayNorms } = require("../src/lib/geosCfRaster");
+      const width = 8;
+      const height = 8;
+      const norms = new Float32Array(width * height);
+      // Half zeros, half 1.0 (sharp step edge), and negative mask in corner
+      for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          const idx = y * width + x;
+          if (x === 0 && y === 0) {
+            norms[idx] = -1; // masked
+          } else if (x < 4) {
+            norms[idx] = 0.0;
+          } else {
+            norms[idx] = 1.0;
+          }
+        }
+      }
+
+      const smoothed = smoothDisplayNorms(norms, width, height);
+      // Verify mask preserved
+      assert.equal(smoothed[0], -1);
+
+      // Verify step transition at column 3 and 4 is smoothed between 0.0 and 1.0
+      const midValLeft = smoothed[4 * width + 3];
+      const midValRight = smoothed[4 * width + 4];
+      assert.ok(midValLeft > 0.0 && midValLeft < 0.6, `Expected smoothed transition, got ${midValLeft}`);
+      assert.ok(midValRight > 0.4 && midValRight < 1.0, `Expected smoothed transition, got ${midValRight}`);
+    });
+
+    it("smoothDisplayNorms infills isolated inland no-data holes without leaking into ocean boundaries", () => {
+      const { smoothDisplayNorms } = require("../src/lib/geosCfRaster");
+      const width = 10;
+      const height = 10;
+      const norms = new Float32Array(width * height);
+      norms.fill(0.7);
+
+      // Create an inland hole of 2x2 at (4,4)..(5,5)
+      norms[4 * width + 4] = -1;
+      norms[4 * width + 5] = -1;
+      norms[5 * width + 4] = -1;
+      norms[5 * width + 5] = -1;
+
+      // Create ocean boundary on row 0 and 1
+      for (let x = 0; x < width; x += 1) {
+        norms[0 * width + x] = -1;
+        norms[1 * width + x] = -1;
+      }
+
+      const processed = smoothDisplayNorms(norms, width, height);
+
+      // Verify inland hole is fully infilled
+      assert.ok(processed[4 * width + 4] > 0.5, "Inland hole pixel (4,4) must be infilled");
+      assert.ok(processed[5 * width + 5] > 0.5, "Inland hole pixel (5,5) must be infilled");
+
+      // Verify deep ocean row 0 remains masked (-1)
+      assert.equal(processed[0 * width + 4], -1, "Deep ocean row must remain masked");
+    });
+
+    it("verifies worker script instantiation includes cache buster version query", () => {
+      const geosPath = path.resolve(__dirname, "../src/lib/geosCfRaster.ts");
+      const content = fs.readFileSync(geosPath, "utf-8");
+      assert.ok(content.includes("/workers/raster-tile-worker.js?v="), "Worker must include version query parameter");
     });
   });
 });

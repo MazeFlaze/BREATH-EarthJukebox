@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -8,6 +8,7 @@ import {
   Globe,
   Grid,
   Hand,
+  Info,
   Layers,
   Map as MapIcon,
   PenTool,
@@ -70,9 +71,13 @@ export default function ExplorePage() {
     camera,
     mapping,
     regionStats,
+    backendStatus,
+    availableTimestamps,
+    refreshBackendConnection,
     canUndoPolygon,
     canRedoPolygon,
     setActiveLayer,
+    getLayerRestriction,
     setBasemapMode,
     setLayerVisible,
     setLayerOpacity,
@@ -92,6 +97,12 @@ export default function ExplorePage() {
   } = useBreathe();
 
   const [tab, setTab] = useState<"sound" | "data" | "about">("sound");
+  const [, startTransition] = useTransition();
+  const handleTabChange = (nextTab: "sound" | "data" | "about") => {
+    startTransition(() => {
+      setTab(nextTab);
+    });
+  };
   const [drawTool, setDrawTool] = useState<MapDrawTool>("select");
   const [scanLocked, setScanLocked] = useState(false);
   const [timelinePlaying, setTimelinePlaying] = useState(false);
@@ -100,6 +111,7 @@ export default function ExplorePage() {
   const [searchError, setSearchError] = useState<string | null>(null);
 
   const layerDef = getLayerDefinition(activeLayer);
+  const pm25Restriction = getLayerRestriction("PM25_RH35");
   const compositionSpec = useMemo(() => buildCompositionSpec(), [buildCompositionSpec]);
 
   useEffect(() => {
@@ -227,7 +239,15 @@ export default function ExplorePage() {
           <h1>Earth Explorer</h1>
           <p>Browse territory borders overlaid with NASA air quality fields and click any country or draw a basin to hear its curve.</p>
         </div>
-        <DataBadge label="NASA GEOS-CF v2 · 12 Nov 2026" />
+        <DataBadge
+          label={
+            regionStats.sourceKind === "backend-netcdf" || backendStatus === "live"
+              ? `NASA GEOS-CF v2 · Live API (${(availableTimestamps[0] ?? timeSlots[0] ?? "2026-11-12").slice(0, 10)})`
+              : backendStatus === "checking"
+              ? "NASA GEOS-CF v2 · Checking API"
+              : `NASA GEOS-CF v2 · Offline Raster (${(timeSlots[0] ?? "2026-11-12").slice(0, 10)})`
+          }
+        />
       </div>
 
       <div className="b-container b-explore-toolbar">
@@ -363,7 +383,14 @@ export default function ExplorePage() {
               onToggleVisible={() => setLayerVisible(!layerVisible)}
               layerOpacity={layerOpacity}
               onOpacityChange={setLayerOpacity}
+              getLayerDisabledReason={(key) => getLayerRestriction(key)?.shortReason ?? null}
             />
+            {pm25Restriction && (
+              <div className="b-layer-restriction-note is-sidebar" role="status" aria-live="polite">
+                <Info size={13} aria-hidden="true" />
+                <span>{pm25Restriction.notice}</span>
+              </div>
+            )}
           </div>
 
           <div className="b-sidebar-section">
@@ -558,7 +585,7 @@ export default function ExplorePage() {
               role="tab"
               aria-selected={tab === "sound"}
               className={tab === "sound" ? "is-active" : undefined}
-              onClick={() => setTab("sound")}
+              onClick={() => handleTabChange("sound")}
             >
               Sound preview
             </button>
@@ -567,7 +594,7 @@ export default function ExplorePage() {
               role="tab"
               aria-selected={tab === "data"}
               className={tab === "data" ? "is-active" : undefined}
-              onClick={() => setTab("data")}
+              onClick={() => handleTabChange("data")}
             >
               Region data
             </button>
@@ -576,13 +603,16 @@ export default function ExplorePage() {
               role="tab"
               aria-selected={tab === "about"}
               className={tab === "about" ? "is-active" : undefined}
-              onClick={() => setTab("about")}
+              onClick={() => handleTabChange("about")}
             >
               About
             </button>
           </div>
 
-          {tab === "sound" && (
+          <div
+            role="tabpanel"
+            className={`b-tab-pane ${tab === "sound" ? "is-active" : "is-hidden"}`}
+          >
             <div className="b-preview-content">
               <h2>{selection.name}</h2>
               <p className="b-muted b-tabular">{formatUtc(timeSlots[timeIndex] ?? timeSlots[0])}</p>
@@ -618,9 +648,12 @@ export default function ExplorePage() {
               </Link>
               <p className="b-footnote">{regionStats.sourceLabel} · Web Audio synthesizer</p>
             </div>
-          )}
+          </div>
 
-          {tab === "data" && (
+          <div
+            role="tabpanel"
+            className={`b-tab-pane ${tab === "data" ? "is-active" : "is-hidden"}`}
+          >
             <div className="b-preview-content">
               <h2>{selection.name}</h2>
               <p className="b-muted b-tabular">{formatBounds(selection.bounds)}</p>
@@ -660,7 +693,19 @@ export default function ExplorePage() {
                 </div>
                 <div>
                   <span>Source</span>
-                  <strong>{regionStats.sourceLabel}</strong>
+                  <strong style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    {regionStats.sourceLabel}
+                    {backendStatus === "offline" && (
+                      <button
+                        type="button"
+                        className="b-inline-tool"
+                        onClick={() => void refreshBackendConnection()}
+                        title="Retry connecting to FastAPI backend"
+                      >
+                        Retry API
+                      </button>
+                    )}
+                  </strong>
                 </div>
               </div>
 
@@ -674,23 +719,64 @@ export default function ExplorePage() {
                 <ArrowRight size={15} />
               </Link>
             </div>
-          )}
+          </div>
 
-          {tab === "about" && (
-            <div className="b-preview-content">
+          <div
+            role="tabpanel"
+            className={`b-tab-pane ${tab === "about" ? "is-active" : "is-hidden"}`}
+          >
+            <div className="b-preview-content b-about-tab">
+              <span className="b-about-kicker b-tabular">
+                {layerDef.short} · {layerDef.unit}
+              </span>
               <h2>{layerDef.label}</h2>
-              <p className="b-muted">{layerDef.description}</p>
-              <div className="b-about-callout">
-                <strong>Policy note:</strong> {layerDef.methodologyNote} Dimensionless Aerosol
-                Optical Depth (AOD) and Air Quality Index (AQI) are never substituted for surface{" "}
-                {layerDef.short}.
+              <p className="b-about-desc">{layerDef.description}</p>
+
+              <div className="b-metric-list b-about-specs">
+                <div>
+                  <span>Variable ID</span>
+                  <strong className="b-tabular">{layerDef.key}</strong>
+                </div>
+                <div>
+                  <span>Display scale</span>
+                  <strong className="b-tabular">
+                    {layerDef.vmin}–{layerDef.vmax} {layerDef.unit}
+                  </strong>
+                </div>
+                <div>
+                  <span>Color ramp</span>
+                  <strong className="b-about-cmap">{layerDef.cmap}</strong>
+                </div>
+                <div>
+                  <span>Source stream</span>
+                  <strong>
+                    {layerDef.available ? "NASA GMAO GEOS-CF v2" : "MODIS / VIIRS (pending)"}
+                  </strong>
+                </div>
               </div>
-              <Link href="/learn" className="b-button b-button-secondary b-full-button">
-                <span>Explore methods in Learning Lab</span>
-                <ArrowRight size={14} />
-              </Link>
+
+              <div className="b-about-callout">
+                <Info size={15} aria-hidden="true" />
+                <div>
+                  <strong>Scientific policy note</strong>
+                  <p>
+                    {layerDef.methodologyNote} Dimensionless Aerosol Optical Depth (AOD) and Air
+                    Quality Index (AQI) are never substituted for surface {layerDef.short}.
+                  </p>
+                </div>
+              </div>
+
+              <div className="b-about-footer">
+                <Link href="/learn" className="b-button b-button-secondary b-full-button">
+                  <span>Explore methods in Learning Lab</span>
+                  <ArrowRight size={14} />
+                </Link>
+                <p className="b-footnote">
+                  Independent variable scale · Earth observation methodology
+                </p>
+              </div>
             </div>
-          )}
+          </div>
         </aside>
       </div>
 

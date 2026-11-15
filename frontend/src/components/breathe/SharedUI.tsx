@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "motion/react";
@@ -39,6 +39,8 @@ export function BasemapSwitcher({
   onChange: (mode: BasemapMode) => void;
   compact?: boolean;
 }) {
+  const [, startTransition] = useTransition();
+
   return (
     <div
       className={`b-basemap-switch ${compact ? "is-compact" : ""}`.trim()}
@@ -51,7 +53,11 @@ export function BasemapSwitcher({
           type="button"
           className={value === opt.value ? "is-active" : undefined}
           aria-pressed={value === opt.value}
-          onClick={() => onChange(opt.value)}
+          onClick={() => {
+            startTransition(() => {
+              onChange(opt.value);
+            });
+          }}
         >
           {opt.label}
         </button>
@@ -173,6 +179,7 @@ export function LayerList({
   onToggleVisible,
   layerOpacity = 0.76,
   onOpacityChange,
+  getLayerDisabledReason,
 }: {
   value: LayerKey;
   onChange: (key: LayerKey) => void;
@@ -181,6 +188,7 @@ export function LayerList({
   onToggleVisible?: () => void;
   layerOpacity?: number;
   onOpacityChange?: (opacity: number) => void;
+  getLayerDisabledReason?: (key: LayerKey) => string | null;
 }) {
   const activeDef = getLayerDefinition(value);
 
@@ -193,6 +201,8 @@ export function LayerList({
       >
         {layers.map((layer) => {
           const active = layer.key === value;
+          const disabledReason = getLayerDisabledReason?.(layer.key) ?? null;
+          const isDisabled = !layer.available || Boolean(disabledReason);
           return (
             <button
               key={layer.key}
@@ -201,16 +211,22 @@ export function LayerList({
               aria-checked={active}
               className={active ? "is-active" : undefined}
               onClick={() => {
-                if (layer.available) onChange(layer.key);
+                if (!isDisabled) onChange(layer.key);
               }}
-              disabled={!layer.available}
-              title={!layer.available ? layer.methodologyNote : layer.description}
+              disabled={isDisabled}
+              title={
+                disabledReason ?? (!layer.available ? layer.methodologyNote : layer.description)
+              }
             >
               <span className="b-layer-radio" aria-hidden="true" />
               <span className="b-layer-name">{layer.short}</span>
               {!compact && (
                 <span className="b-layer-detail">
-                  {layer.available ? layer.label : "Awaiting data"}
+                  {disabledReason
+                    ? "Hidden (Arctic)"
+                    : layer.available
+                      ? layer.label
+                      : "Awaiting data"}
                 </span>
               )}
             </button>
@@ -383,6 +399,7 @@ export const CustomSelect = memo(function CustomSelect({
   searchPlaceholder = "Type to search...",
   disabled = false,
   compact = false,
+  dropdownAlign = "left",
   ariaLabel,
   title,
 }: {
@@ -395,6 +412,7 @@ export const CustomSelect = memo(function CustomSelect({
   searchPlaceholder?: string;
   disabled?: boolean;
   compact?: boolean;
+  dropdownAlign?: "left" | "right";
   ariaLabel?: string;
   title?: string;
 }) {
@@ -486,7 +504,7 @@ export const CustomSelect = memo(function CustomSelect({
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         disabled={disabled}
-        title={title}
+        title={title || (selectedOption ? selectedOption.label : undefined)}
         onClick={() => {
           if (!disabled) setIsOpen((prev) => !prev);
         }}
@@ -511,7 +529,11 @@ export const CustomSelect = memo(function CustomSelect({
       </button>
 
       {isOpen && (
-        <div className="b-combobox-dropdown">
+        <div
+          className={`b-combobox-dropdown ${
+            dropdownAlign === "right" ? "is-align-right" : ""
+          }`.trim()}
+        >
           {searchable && (
             <div className="b-combobox-search-header">
               <Search size={14} className="b-combobox-search-icon" aria-hidden="true" />
@@ -722,7 +744,7 @@ export const TerritorySelect = memo(function TerritorySelect({
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         disabled={disabled}
-        title={title}
+        title={title || activeLabel || undefined}
         onClick={() => {
           if (!disabled) setIsOpen((prev) => !prev);
         }}
