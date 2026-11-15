@@ -9,6 +9,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { usePathname } from "next/navigation";
 import { MotionConfig } from "motion/react";
 import {
   formatUtc,
@@ -63,13 +64,20 @@ function scheduleWhenIdle(task: () => void, timeoutMs: number): () => void {
 function toTerritoryCatalogEntries(
   bundle: Awaited<ReturnType<typeof loadWorldBoundariesQuick>>
 ): TerritoryCatalogEntry[] {
-  return bundle.countries.features
-    .map((f) => ({
-      id: `territory-${f.properties.isoNumeric}`,
-      isoNumeric: f.properties.isoNumeric,
-      name: f.properties.name,
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const byId = new Map<string, TerritoryCatalogEntry>();
+  for (const f of bundle.countries.features) {
+    const code = f.properties.isoNumeric?.trim();
+    if (!code) continue;
+    const id = `territory-${code}`;
+    if (!byId.has(id)) {
+      byId.set(id, {
+        id,
+        isoNumeric: code,
+        name: f.properties.name,
+      });
+    }
+  }
+  return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 const DEFAULT_MAPPING: SonificationMapping = {
@@ -154,6 +162,10 @@ interface BreatheContextValue {
 const BreatheContext = createContext<BreatheContextValue | null>(null);
 
 export function BreatheProvider({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const isMapWorkspace =
+    Boolean(pathname?.startsWith("/explore")) || Boolean(pathname?.startsWith("/studio"));
+
   const [selectionHistory, setSelectionHistory] = useState<GeographicSelection[]>([
     DEFAULT_SELECTION,
   ]);
@@ -192,8 +204,9 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
   const [territories, setTerritories] = useState<TerritoryCatalogEntry[]>([]);
   const hydratedRef = useRef(false);
 
-  // Load lightweight 110m countries catalog immediately, then upgrade to 50m on browser idle
+  // Load lightweight 110m countries catalog and upgrade to 50m on browser idle ONLY on map workspace routes
   useEffect(() => {
+    if (!isMapWorkspace) return;
     let active = true;
     let cancelIdle: (() => void) | null = null;
     void loadWorldBoundariesQuick().then((bundle) => {
@@ -210,14 +223,14 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
       active = false;
       cancelIdle?.();
     };
-  }, []);
+  }, [isMapWorkspace]);
 
-  // Automatically hydrate full GeoJSON Polygon/MultiPolygon boundary whenever selection carries a territoryCode
+  // Hydrate full 50m GeoJSON Polygon/MultiPolygon boundary only on map workspace routes
   useEffect(() => {
     const code = selection.territoryCode;
-    if (!code || selection.boundaryGeometry) return;
+    if (!isMapWorkspace || !code || selection.boundaryGeometry) return;
     let cancelled = false;
-    void resolveTerritoryByCodeOrName(code, selection.id, selection.name).then((resolved) => {
+    void resolveTerritoryByCodeOrName(code, selection.id, selection.name, "50m").then((resolved) => {
       if (cancelled || !resolved) return;
       setSelectionHistory((prev) =>
         prev.map((item) =>
@@ -238,7 +251,7 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [selection.id, selection.name, selection.territoryCode, selection.boundaryGeometry]);
+  }, [isMapWorkspace, selection.id, selection.name, selection.territoryCode, selection.boundaryGeometry]);
 
   // Hydrate persisted selection, saved works, bookmarks, and optional URL query context once on client
   useEffect(() => {
@@ -363,8 +376,9 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
     }
   }, [selection]);
 
-  // Query live backend / GEOS-CF raster stats for the current boundary + active variable + timestamp
+  // Query live backend / GEOS-CF raster stats only on map workspace routes
   useEffect(() => {
+    if (!isMapWorkspace) return;
     let cancelled = false;
     if (!selection.boundaryGeometry && selection.polygon.length < 3) return;
 
@@ -388,13 +402,14 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [selection.polygon, selection.bounds, selection.boundaryGeometry, activeLayer, timeIndex]);
+  }, [isMapWorkspace, selection.polygon, selection.bounds, selection.boundaryGeometry, activeLayer, timeIndex]);
 
   const initialSeriesSettledRef = useRef(false);
 
-  // Sample diurnal 8-step atmospheric time series across the current boundary & active variable.
+  // Sample diurnal 8-step atmospheric time series across the current boundary & active variable on map routes.
   // Deferred until idle on initial boot so 8 raster decodes never contend with 3D globe painting.
   useEffect(() => {
+    if (!isMapWorkspace) return;
     let cancelled = false;
     if (!selection.boundaryGeometry && selection.polygon.length < 3) return;
 
@@ -402,7 +417,12 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
     const cancelIdle = scheduleWhenIdle(() => {
       if (cancelled) return;
       initialSeriesSettledRef.current = true;
-      void samplePolygonSeries(activeLayer, selection.polygon, selection.boundaryGeometry).then((series) => {
+      void samplePolygonSeries(
+        activeLayer,
+        selection.polygon,
+        selection.boundaryGeometry,
+        selection.bounds
+      ).then((series) => {
         if (!cancelled && series.length > 0) {
           setRegionSeries(series);
         }
@@ -413,7 +433,7 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
       cancelIdle();
     };
-  }, [selection.polygon, selection.boundaryGeometry, activeLayer]);
+  }, [isMapWorkspace, selection.polygon, selection.boundaryGeometry, selection.bounds, activeLayer]);
 
   const setCamera = useCallback(
     (patch: Partial<MapCameraState> | ((prev: MapCameraState) => MapCameraState)) => {
@@ -604,17 +624,18 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
     [selection.id, selection.name, activeLayer, timeIndex, regionSeries, mapping]
   );
 
-  // Keep Web Audio synthesizer + preview schedule synchronized live with mapping changes
+  // Keep Web Audio synthesizer + preview schedule synchronized live with mapping changes on map workspace routes
   useEffect(() => {
+    if (!isMapWorkspace) return;
     const spec = buildCompositionSpec();
     sonificationService.syncPreviewSpec(spec);
-  }, [buildCompositionSpec]);
+  }, [isMapWorkspace, buildCompositionSpec]);
 
   const loadWorkContext = useCallback(
     (work: GalleryWork, targetMode?: "globe" | "flat") => {
       const cached = getCachedWorldBoundaries();
       let resolvedGeom = work.boundaryGeometry;
-      if (!resolvedGeom && work.territoryCode && cached) {
+      if (!resolvedGeom && work.territoryCode && cached?.resolution === "50m") {
         const feat = findTerritoryFeature(cached, work.territoryCode);
         const resolved = feat ? buildResolvedTerritory(feat, work.regionId, work.region) : null;
         if (resolved) resolvedGeom = resolved.boundaryGeometry;
