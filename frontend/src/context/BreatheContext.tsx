@@ -298,6 +298,8 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
   const [bookmarkedIds, setBookmarkedIds] = useState<string[]>(["beijing", "monsoon"]);
   const [territories, setTerritories] = useState<TerritoryCatalogEntry[]>([]);
   const hydratedRef = useRef(false);
+  const activeStatsAbortRef = useRef<AbortController | null>(null);
+  const activeSeriesAbortRef = useRef<AbortController | null>(null);
 
   // Load lightweight 110m countries catalog and upgrade to 50m on browser idle ONLY on map workspace routes
   useEffect(() => {
@@ -488,8 +490,13 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
   // Query live backend / GEOS-CF raster stats only on map workspace routes
   useEffect(() => {
     if (!isMapWorkspace) return;
-    let cancelled = false;
     if (!selection.boundaryGeometry && selection.polygon.length < 3) return;
+
+    if (activeStatsAbortRef.current) {
+      activeStatsAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    activeStatsAbortRef.current = controller;
 
     setRegionStats((prev) => ({
       ...prev,
@@ -503,18 +510,26 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
       timeIndex,
       selection.bounds,
       selection.polygon,
-      selection.boundaryGeometry
-    ).then((stats) => {
-      if (!cancelled) {
-        setRegionStats(stats);
-        if (stats.sourceKind === "backend-netcdf") {
-          setBackendStatus("live");
+      selection.boundaryGeometry,
+      controller.signal
+    )
+      .then((stats) => {
+        if (!controller.signal.aborted) {
+          setRegionStats(stats);
+          if (stats.sourceKind === "backend-netcdf") {
+            setBackendStatus("live");
+          }
         }
-      }
-    });
+      })
+      .catch((err) => {
+        if (err instanceof Error && err.name === "AbortError") return;
+      });
 
     return () => {
-      cancelled = true;
+      controller.abort();
+      if (activeStatsAbortRef.current === controller) {
+        activeStatsAbortRef.current = null;
+      }
     };
   }, [isMapWorkspace, selection.polygon, selection.bounds, selection.boundaryGeometry, activeLayer, timeIndex]);
 
@@ -524,27 +539,41 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
   // Deferred until idle on initial boot so 8 raster decodes never contend with 3D globe painting.
   useEffect(() => {
     if (!isMapWorkspace) return;
-    let cancelled = false;
     if (!selection.boundaryGeometry && selection.polygon.length < 3) return;
+
+    if (activeSeriesAbortRef.current) {
+      activeSeriesAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    activeSeriesAbortRef.current = controller;
 
     const timeoutMs = initialSeriesSettledRef.current ? 240 : 1800;
     const cancelIdle = scheduleWhenIdle(() => {
-      if (cancelled) return;
+      if (controller.signal.aborted) return;
       initialSeriesSettledRef.current = true;
       void samplePolygonSeries(
         activeLayer,
         selection.polygon,
         selection.boundaryGeometry,
-        selection.bounds
-      ).then((series) => {
-        if (!cancelled && series.length > 0) {
-          setRegionSeries(series);
-        }
-      });
+        selection.bounds,
+        undefined,
+        controller.signal
+      )
+        .then((series) => {
+          if (!controller.signal.aborted && series.length > 0) {
+            setRegionSeries(series);
+          }
+        })
+        .catch((err) => {
+          if (err instanceof Error && err.name === "AbortError") return;
+        });
     }, timeoutMs);
 
     return () => {
-      cancelled = true;
+      controller.abort();
+      if (activeSeriesAbortRef.current === controller) {
+        activeSeriesAbortRef.current = null;
+      }
       cancelIdle();
     };
   }, [isMapWorkspace, selection.polygon, selection.boundaryGeometry, selection.bounds, activeLayer]);

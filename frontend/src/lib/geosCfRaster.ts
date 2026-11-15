@@ -1447,6 +1447,38 @@ export interface BackendRegionResponse {
 }
 
 /**
+ * Links an optional caller AbortSignal to a per-request timeout AbortController so either
+ * external cancellation or timeout aborts the request cleanly without listener leaks.
+ */
+function createLinkedAbortController(
+  timeoutMs: number,
+  externalSignal?: AbortSignal
+): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const onExternalAbort = () => {
+    clearTimeout(timer);
+    controller.abort(externalSignal?.reason);
+  };
+
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      onExternalAbort();
+    } else {
+      externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      externalSignal?.removeEventListener("abort", onExternalAbort);
+    },
+  };
+}
+
+/**
  * Computes the 8-timestamp diurnal mean time series for any drawn polygon and active variable.
  * Queries backend /api/v1/jukebox/region with includeSeries: true when online, falling back
  * seamlessly to offline raster colormap sampling if unreachable, timed out, or returning empty.
@@ -1456,22 +1488,33 @@ export async function samplePolygonSeries(
   polygon: GeoPoint[],
   boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon,
   bounds?: GeoBounds,
-  targetTimestamp?: string
+  targetTimestamp?: string,
+  signal?: AbortSignal
 ): Promise<number[]> {
+  if (signal?.aborted) {
+    return [];
+  }
+
   const layer = getLayerDefinition(layerKey);
   if (!layer.available || layerKey === "AOD") {
     return timeSlots.map(() => 0);
   }
 
   const runOfflineFallback = async (): Promise<number[]> => {
+    if (signal?.aborted) return [];
     const results = await Promise.all(
-      timeSlots.map((_, idx) => samplePolygonStats(layerKey, idx, polygon, boundaryGeometry))
+      timeSlots.map((_, idx) =>
+        signal?.aborted ? null : samplePolygonStats(layerKey, idx, polygon, boundaryGeometry)
+      )
     );
-    return results.map((stat) => (stat.mean !== null ? stat.mean : layer.vmin));
+    if (signal?.aborted) return [];
+    return results
+      .filter((stat): stat is RegionStats => stat !== null)
+      .map((stat) => (stat.mean !== null ? stat.mean : layer.vmin));
   };
 
   if (Date.now() >= backendUnavailableUntil) {
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cleanupAbort: (() => void) | undefined;
     try {
       const effectiveBounds =
         bounds ??
@@ -1486,13 +1529,13 @@ export async function samplePolygonSeries(
       const lonMin = Number(Math.min(effectiveBounds.west, effectiveBounds.east).toFixed(4));
       const lonMax = Number(Math.max(effectiveBounds.west, effectiveBounds.east).toFixed(4));
 
-      const controller = new AbortController();
-      timer = setTimeout(() => controller.abort(), 5000);
+      const linkedAbort = createLinkedAbortController(5000, signal);
+      cleanupAbort = linkedAbort.cleanup;
       const serializedRings = serializePolygonRingsForApi(boundaryGeometry ?? polygon, 320);
       const response = await fetch(resolveBackendRequestUrl("/api/v1/jukebox/region"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
+        signal: linkedAbort.signal,
         body: JSON.stringify({
           datasetId: "geos-cf-v2-aqc",
           timestamp: targetTimestamp ?? timeSlots[0] ?? "2026-11-12T00:30:00Z",
@@ -1510,9 +1553,16 @@ export async function samplePolygonSeries(
         }),
       });
 
+      if (signal?.aborted) {
+        return [];
+      }
+
       if (response.ok) {
         backendUnavailableUntil = 0;
         const payload = (await response.json()) as BackendRegionResponse;
+        if (signal?.aborted) {
+          return [];
+        }
         if (
           Array.isArray(payload.series) &&
           (payload.series.length === timeSlots.length || payload.series.length > 0) &&
@@ -1524,12 +1574,18 @@ export async function samplePolygonSeries(
         backendUnavailableUntil = Date.now() + 30000;
       }
     } catch {
+      if (signal?.aborted) {
+        return [];
+      }
       backendUnavailableUntil = Date.now() + 30000;
     } finally {
-      if (timer) clearTimeout(timer);
+      cleanupAbort?.();
     }
   }
 
+  if (signal?.aborted) {
+    return [];
+  }
   return runOfflineFallback();
 }
 
@@ -1651,8 +1707,13 @@ export async function fetchBackendRegionStats(
   timeIndex: number,
   bounds: GeoBounds,
   polygon: GeoPoint[],
-  boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon
+  boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon,
+  signal?: AbortSignal
 ): Promise<RegionStats> {
+  if (signal?.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+
   const layer = getLayerDefinition(layerKey);
   if (!layer.available || layerKey === "AOD") {
     return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
@@ -1665,7 +1726,7 @@ export async function fetchBackendRegionStats(
     return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
   }
 
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cleanupAbort: (() => void) | undefined;
   try {
     const effectiveBounds =
       bounds ??
@@ -1680,13 +1741,13 @@ export async function fetchBackendRegionStats(
     const lonMin = Number(Math.min(effectiveBounds.west, effectiveBounds.east).toFixed(4));
     const lonMax = Number(Math.max(effectiveBounds.west, effectiveBounds.east).toFixed(4));
 
-    const controller = new AbortController();
-    timer = setTimeout(() => controller.abort(), 3500);
+    const linkedAbort = createLinkedAbortController(3500, signal);
+    cleanupAbort = linkedAbort.cleanup;
     const serializedRings = serializePolygonRingsForApi(boundaryGeometry ?? polygon, 320);
     const response = await fetch(resolveBackendRequestUrl("/api/v1/jukebox/region"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
+      signal: linkedAbort.signal,
       body: JSON.stringify({
         datasetId: "geos-cf-v2-aqc",
         timestamp,
@@ -1702,6 +1763,10 @@ export async function fetchBackendRegionStats(
       }),
     });
 
+    if (signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+
     if (!response.ok) {
       backendUnavailableUntil = Date.now() + 30000;
       return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
@@ -1710,6 +1775,9 @@ export async function fetchBackendRegionStats(
     backendUnavailableUntil = 0;
 
     const payload = (await response.json()) as BackendRegionResponse;
+    if (signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
     const summary = payload.summary;
     const rawMean = summary?.displayMean ?? summary?.mean;
     if (!summary || rawMean == null || Number.isNaN(rawMean)) {
@@ -1743,11 +1811,14 @@ export async function fetchBackendRegionStats(
       isMock: Boolean(payload.isMock),
       loading: false,
     };
-  } catch {
+  } catch (err: unknown) {
+    if (signal?.aborted) {
+      throw err instanceof Error ? err : new DOMException("Aborted", "AbortError");
+    }
     backendUnavailableUntil = Date.now() + 30000;
     return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
   } finally {
-    if (timer) clearTimeout(timer);
+    cleanupAbort?.();
   }
 }
 

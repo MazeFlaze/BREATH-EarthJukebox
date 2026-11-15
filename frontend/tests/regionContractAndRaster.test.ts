@@ -283,6 +283,43 @@ describe("Frontend Region API Contract & Raster Decode Tests", () => {
       assert.equal(capturedBody.bounds.latMin, 14);
       assert.equal(capturedBody.bounds.latMax, 16);
     });
+
+    it("rejects immediately on aborted signal and aborts mid-flight fetch without tripping circuit breaker", async () => {
+      process.env.NEXT_PUBLIC_BACKEND_URL = "http://mock-backend:8000";
+
+      const preAborted = new AbortController();
+      preAborted.abort();
+      let fetchCalls = 0;
+      globalThis.fetch = async () => {
+        fetchCalls += 1;
+        return new Response("{}", { status: 200 });
+      };
+
+      await assert.rejects(
+        () => fetchBackendRegionStats("NO2", 0, sampleBounds, samplePolygon, undefined, preAborted.signal),
+        (err: Error) => err.name === "AbortError"
+      );
+      assert.equal(fetchCalls, 0, "Pre-aborted signal must skip network call");
+      assert.equal(getBackendCircuitBreakerUntil(), 0, "Abort must not trip circuit breaker");
+
+      const midFlight = new AbortController();
+      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true }
+          );
+          setTimeout(() => midFlight.abort(), 5);
+        });
+      };
+
+      await assert.rejects(
+        () => fetchBackendRegionStats("NO2", 0, sampleBounds, samplePolygon, undefined, midFlight.signal),
+        (err: Error) => err.name === "AbortError"
+      );
+      assert.equal(getBackendCircuitBreakerUntil(), 0, "Mid-flight abort must not trip circuit breaker");
+    });
   });
 
   describe("3. samplePolygonSeries() diurnal series & fallback", () => {
@@ -383,6 +420,45 @@ describe("Frontend Region API Contract & Raster Decode Tests", () => {
 
       assert.equal(fetchCalled, false);
       assert.deepEqual(series, [0, 0, 0, 0, 0, 0, 0, 0]);
+    });
+
+    it("returns empty series immediately when AbortSignal cancels mid-flight without tripping circuit breaker", async () => {
+      process.env.NEXT_PUBLIC_BACKEND_URL = "http://mock-backend:8000";
+
+      const preAborted = new AbortController();
+      preAborted.abort();
+      const early = await samplePolygonSeries(
+        "PM25_RH35",
+        samplePolygon,
+        undefined,
+        sampleBounds,
+        undefined,
+        preAborted.signal
+      );
+      assert.deepEqual(early, []);
+
+      const midFlight = new AbortController();
+      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true }
+          );
+          setTimeout(() => midFlight.abort(), 5);
+        });
+      };
+
+      const abortedSeries = await samplePolygonSeries(
+        "PM25_RH35",
+        samplePolygon,
+        undefined,
+        sampleBounds,
+        undefined,
+        midFlight.signal
+      );
+      assert.deepEqual(abortedSeries, []);
+      assert.equal(getBackendCircuitBreakerUntil(), 0, "Aborted series request must not trip circuit breaker");
     });
   });
 
