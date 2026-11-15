@@ -168,6 +168,10 @@ jobs:
           remote = GeosCfCatalog.model_validate_json(Path("/tmp/remote-index.json").read_text(encoding="utf-8"))
           local = GeosCfCatalog.model_validate_json(Path("/tmp/geos-cf-catalog/index.json").read_text(encoding="utf-8"))
           by_id = {e.id: e for e in remote.entries}
+          local_ready_ts = {e.timestamp_utc for e in local.entries if e.status == "ready" and e.timestamp_utc}
+          for entry_id, existing in list(by_id.items()):
+              if existing.status == "ready" and existing.timestamp_utc in local_ready_ts:
+                  del by_id[entry_id]
           for entry in local.entries:
               by_id[entry.id] = entry
           entries = sorted(by_id.values(), key=lambda e: (e.timestamp_utc or "", e.id))

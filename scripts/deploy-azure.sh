@@ -22,8 +22,8 @@ ACR_NAME="${ACR_NAME:-acrbreathe$RANDOM}"
 ENVIRONMENT_NAME="${CONTAINERAPPS_ENVIRONMENT:-cae-breathe}"
 BACKEND_APP_NAME="breathe-backend"
 FRONTEND_APP_NAME="breathe-frontend"
-CATALOG_SHARE_NAME="geos-cf-catalog"
-CATALOG_MOUNT_PATH="/app/data/geos-cf-catalog"
+export CATALOG_SHARE_NAME="geos-cf-catalog"
+export CATALOG_MOUNT_PATH="/app/data/geos-cf-catalog"
 STORAGE_ACCOUNT="${AZURE_STORAGE_ACCOUNT:-}"
 
 # Database Configuration (Neon Serverless PostgreSQL)

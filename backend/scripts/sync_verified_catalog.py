@@ -166,6 +166,8 @@ def sync_catalog(
         raise SystemExit(1)
 
     resolved_reference = resolve_reference_contract(reference_contract)
+    index_file = output / "index.json"
+    previous_index = index_file.read_bytes() if index_file.exists() else None
     if append:
         exported = export_catalog(
             [archive_dir],
@@ -185,6 +187,10 @@ def sync_catalog(
             )
 
     if exported.ready_count <= 0:
+        if previous_index is not None:
+            tmp_restore = output / "index.tmp"
+            tmp_restore.write_bytes(previous_index)
+            tmp_restore.replace(index_file)
         print("Error: Catalog export produced 0 ready snapshots; skipping prune.", file=sys.stderr)
         raise SystemExit(1)
 

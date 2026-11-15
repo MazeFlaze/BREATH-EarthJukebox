@@ -456,3 +456,41 @@ def test_cli_flags_and_module_entrypoint_parse_cleanly(tmp_path, monkeypatch):
         check=True,
     )
     assert "--scientific-only" in backend_help.stdout
+
+
+def test_sync_restores_previous_index_when_export_produces_zero_ready(tmp_path, monkeypatch):
+    cli = _import_sync_cli(monkeypatch)
+    archive_dir = tmp_path / "archive"
+    scratch_dir = tmp_path / "scratch"
+    output = tmp_path / "catalog"
+    output.mkdir(parents=True, exist_ok=True)
+    dt = datetime(2026, 11, 14, 22, 30, tzinfo=timezone.utc)
+    _seed_verified_granule(archive_dir, scratch_dir, cli, dt, fill_value=2.0)
+
+    previous_hash = "d" * 64
+    stale_dir = output / previous_hash
+    stale_dir.mkdir(parents=True)
+    (stale_dir / "detail.json").write_text('{"keep":true}', encoding="utf-8")
+    existing_index = output / "index.json"
+    existing_bytes = b'{"ready_count":1,"preserved":true}'
+    existing_index.write_bytes(existing_bytes)
+
+    def zero_ready_export(roots, dest, reference_path=None, *, scientific_only=False):
+        (dest / "index.json").write_text('{"ready_count":0}', encoding="utf-8")
+        return GeosCfCatalog(generated_at="2026-11-15T00:00:00Z", entries=[], gaps=[], ready_count=0)
+
+    monkeypatch.setattr(cli, "export_catalog", zero_ready_export)
+    with pytest.raises(SystemExit) as exc:
+        cli.sync_catalog(
+            latest_hours=1,
+            max_probe_hours=1,
+            archive_dir=archive_dir,
+            output=output,
+            reference_contract=tmp_path / "missing-contract.json",
+            scientific_only=True,
+            append=False,
+            end_utc=dt,
+        )
+    assert exc.value.code == 1
+    assert existing_index.read_bytes() == existing_bytes
+    assert stale_dir.is_dir()
