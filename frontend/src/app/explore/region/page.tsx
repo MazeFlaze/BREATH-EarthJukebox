@@ -49,6 +49,7 @@ export default function RegionPage() {
   } = useBreathe();
 
   const [tool, setTool] = useState<MapDrawTool>("select");
+  const [scanLocked, setScanLocked] = useState(false);
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const didFrameOnMountRef = useRef(false);
 
@@ -91,12 +92,15 @@ export default function RegionPage() {
         <div className="b-region-workspace">
           <div className="b-region-toolbar">
             <div className="b-region-tool-hint">
-              {tool === "polygon" &&
-                "Click map to place vertices · Click green origin point or double-click to close."}
-              {tool === "rectangle" && "Click and drag on map to define a bounding box."}
-              {tool === "freehand" && "Hold pointer down and sketch boundary smoothly."}
-              {tool === "select" &&
-                "Drag any vertex handle, click edge + handles to insert nodes, or click a country to outline."}
+              {scanLocked
+                ? "2D viewport locked during scan — close 2D Scan (×) to pan, zoom, or edit boundary."
+                : tool === "polygon"
+                ? "Click map to place vertices · Click green origin point or double-click to close."
+                : tool === "rectangle"
+                ? "Click and drag on map to define a bounding box."
+                : tool === "freehand"
+                ? "Hold pointer down and sketch boundary smoothly."
+                : "Drag any vertex handle, click edge + handles to insert nodes, or click a country to outline."}
             </div>
             <DataBadge label={regionStats.sourceLabel} />
           </div>
@@ -106,8 +110,11 @@ export default function RegionPage() {
               <button
                 type="button"
                 className={tool === "select" ? "is-active" : undefined}
-                onClick={() => setTool("select")}
-                title="Pan map and edit vertices"
+                aria-disabled={scanLocked || undefined}
+                onClick={() => {
+                  if (!scanLocked) setTool("select");
+                }}
+                title={scanLocked ? "Close 2D Scan to pan or edit vertices" : "Pan map and edit vertices"}
               >
                 <Hand size={15} />
                 <span>Select</span>
@@ -115,8 +122,11 @@ export default function RegionPage() {
               <button
                 type="button"
                 className={tool === "polygon" ? "is-active" : undefined}
-                onClick={() => setTool("polygon")}
-                title="Plot custom polygon vertices"
+                aria-disabled={scanLocked || undefined}
+                onClick={() => {
+                  if (!scanLocked) setTool("polygon");
+                }}
+                title={scanLocked ? "Close 2D Scan to draw polygon" : "Plot custom polygon vertices"}
               >
                 <Shapes size={15} />
                 <span>Polygon</span>
@@ -124,8 +134,11 @@ export default function RegionPage() {
               <button
                 type="button"
                 className={tool === "rectangle" ? "is-active" : undefined}
-                onClick={() => setTool("rectangle")}
-                title="Drag geographic rectangle"
+                aria-disabled={scanLocked || undefined}
+                onClick={() => {
+                  if (!scanLocked) setTool("rectangle");
+                }}
+                title={scanLocked ? "Close 2D Scan to draw box" : "Drag geographic rectangle"}
               >
                 <Square size={15} />
                 <span>Box</span>
@@ -133,8 +146,11 @@ export default function RegionPage() {
               <button
                 type="button"
                 className={tool === "freehand" ? "is-active" : undefined}
-                onClick={() => setTool("freehand")}
-                title="Sketch freehand region"
+                aria-disabled={scanLocked || undefined}
+                onClick={() => {
+                  if (!scanLocked) setTool("freehand");
+                }}
+                title={scanLocked ? "Close 2D Scan to sketch boundary" : "Sketch freehand region"}
               >
                 <PenTool size={15} />
                 <span>Freehand</span>
@@ -142,27 +158,36 @@ export default function RegionPage() {
               <span className="b-draw-divider" aria-hidden="true" />
               <button
                 type="button"
-                onClick={undoPolygon}
+                onClick={() => {
+                  if (!scanLocked) undoPolygon();
+                }}
                 disabled={!canUndoPolygon}
-                title="Undo last boundary edit"
+                aria-disabled={scanLocked || undefined}
+                title={scanLocked ? "Close 2D Scan to undo edit" : "Undo last boundary edit"}
               >
                 <Undo2 size={14} />
                 <span>Undo</span>
               </button>
               <button
                 type="button"
-                onClick={redoPolygon}
+                onClick={() => {
+                  if (!scanLocked) redoPolygon();
+                }}
                 disabled={!canRedoPolygon}
-                title="Redo boundary edit"
+                aria-disabled={scanLocked || undefined}
+                title={scanLocked ? "Close 2D Scan to redo edit" : "Redo boundary edit"}
               >
                 <Redo2 size={14} />
                 <span>Redo</span>
               </button>
               <button
                 type="button"
-                onClick={clearSelection}
+                onClick={() => {
+                  if (!scanLocked) clearSelection();
+                }}
                 disabled={selection.polygon.length === 0}
-                title="Clear active region"
+                aria-disabled={scanLocked || undefined}
+                title={scanLocked ? "Close 2D Scan to clear selection" : "Clear active region"}
               >
                 <RotateCcw size={14} />
                 <span>Clear</span>
@@ -189,6 +214,7 @@ export default function RegionPage() {
                 selectTerritory(territory);
                 setTool("select");
               }}
+              onScanLockChange={setScanLocked}
               tool={tool}
               onToolComplete={() => setTool("select")}
               showLabels
@@ -228,6 +254,8 @@ export default function RegionPage() {
             <TerritorySelect
               selection={selection}
               territories={territories}
+              disabled={scanLocked}
+              title={scanLocked ? "Close 2D Scan to switch territory" : undefined}
               onSelectValue={(val) => {
                 selectPreset(val);
                 setTool("select");
@@ -283,7 +311,10 @@ export default function RegionPage() {
             <button
               type="button"
               className="b-button b-button-secondary b-full-button"
+              aria-disabled={scanLocked || undefined}
+              title={scanLocked ? "Close 2D Scan to convert boundary" : undefined}
               onClick={() => {
+                if (scanLocked) return;
                 convertBoundaryToEditableSketch();
                 setTool("select");
               }}

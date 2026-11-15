@@ -76,6 +76,7 @@ export default function ExplorePage() {
 
   const [tab, setTab] = useState<"sound" | "data" | "about">("sound");
   const [drawTool, setDrawTool] = useState<MapDrawTool>("select");
+  const [scanLocked, setScanLocked] = useState(false);
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [query, setQuery] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
@@ -130,6 +131,7 @@ export default function ExplorePage() {
   }, [query, territories]);
 
   const handleSelectSuggestion = (item: (typeof matchingPlaces)[number]) => {
+    if (scanLocked) return;
     setSearchError(null);
     setSearchFocused(false);
     setQuery(item.name);
@@ -149,6 +151,7 @@ export default function ExplorePage() {
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (scanLocked) return;
     const coord = parseCoordinateQuery(query);
     if (coord) {
       setSearchError(null);
@@ -189,6 +192,7 @@ export default function ExplorePage() {
   };
 
   const activateTool = (nextTool: MapDrawTool) => {
+    if (scanLocked) return;
     setDrawTool(nextTool);
     if (nextTool !== "select" && camera.mode === "globe") {
       setCamera({ mode: "flat", zoom: Math.max(3.6, camera.zoom) });
@@ -214,21 +218,33 @@ export default function ExplorePage() {
             <input
               type="text"
               value={query}
-              onFocus={() => setSearchFocused(true)}
+              readOnly={scanLocked}
+              aria-disabled={scanLocked || undefined}
+              title={scanLocked ? "Close 2D Scan to search and move the map" : undefined}
+              onFocus={() => {
+                if (!scanLocked) setSearchFocused(true);
+              }}
               onBlur={() => setTimeout(() => setSearchFocused(false), 160)}
               onChange={(e) => {
+                if (scanLocked) return;
                 setQuery(e.target.value);
                 setSearchError(null);
               }}
               placeholder="Search place or coordinates (Hanoi, Tokyo, 21.02, 105.85)..."
               aria-label="Search Earth place or coordinates"
             />
-            <button type="submit" className="b-icon-button" aria-label="Go to location">
+            <button
+              type="submit"
+              className="b-icon-button"
+              aria-label="Go to location"
+              aria-disabled={scanLocked || undefined}
+              title={scanLocked ? "Close 2D Scan to jump to location" : "Go to location"}
+            >
               <ArrowRight size={14} />
             </button>
           </form>
 
-          {searchFocused && matchingPlaces.length > 0 && (
+          {!scanLocked && searchFocused && matchingPlaces.length > 0 && (
             <div className="b-search-suggestions" role="listbox" aria-label="Suggested Earth locations">
               {matchingPlaces.map((item) => (
                 <button
@@ -265,13 +281,14 @@ export default function ExplorePage() {
           <button
             type="button"
             className={mapMode === "flat" ? "is-active" : undefined}
-            onClick={() =>
+            onClick={() => {
+              if (mapMode === "flat" || scanLocked) return;
               setCamera({
                 mode: "flat",
                 center: selection.center,
                 zoom: Math.max(2.0, zoomForBounds(selection.bounds) - 0.35),
-              })
-            }
+              });
+            }}
           >
             <MapIcon size={14} /> 2D map
           </button>
@@ -280,20 +297,30 @@ export default function ExplorePage() {
         <button
           type="button"
           className="b-icon-button b-global-button"
-          onClick={() =>
-            mapMode === "flat"
-              ? setCamera({
-                  mode: "flat",
-                  center: { lat: 15, lon: 14 },
-                  zoom: 0.95,
-                })
-              : setCamera({
-                  mode: "globe",
-                  center: { lat: 21.1, lon: 105.75 },
-                  zoom: 2.35,
-                })
+          aria-disabled={scanLocked || undefined}
+          onClick={() => {
+            if (scanLocked) return;
+            if (mapMode === "flat") {
+              setCamera({
+                mode: "flat",
+                center: { lat: 15, lon: 14 },
+                zoom: 0.95,
+              });
+            } else {
+              setCamera({
+                mode: "globe",
+                center: { lat: 21.1, lon: 105.75 },
+                zoom: 2.35,
+              });
+            }
+          }}
+          title={
+            scanLocked
+              ? "Viewport locked during 2D scan — close scan to move"
+              : mapMode === "flat"
+              ? "Full flat world view"
+              : "Reset global view"
           }
-          title={mapMode === "flat" ? "Full flat world view" : "Reset global view"}
           aria-label={mapMode === "flat" ? "Full flat world view" : "Reset global overview"}
         >
           <Compass size={16} />
@@ -330,41 +357,48 @@ export default function ExplorePage() {
               <button
                 type="button"
                 className={`b-inline-tool ${drawTool === "select" ? "is-active" : ""}`}
+                aria-disabled={scanLocked || undefined}
                 onClick={() => activateTool("select")}
-                title="Pan map and drag vertices"
+                title={scanLocked ? "Close 2D Scan to change tools" : "Pan map and drag vertices"}
               >
                 <Hand size={12} /> Select
               </button>
               <button
                 type="button"
                 className={`b-inline-tool ${drawTool === "polygon" ? "is-active" : ""}`}
+                aria-disabled={scanLocked || undefined}
                 onClick={() => activateTool("polygon")}
-                title="Click points to trace custom polygon"
+                title={scanLocked ? "Close 2D Scan to draw polygon" : "Click points to trace custom polygon"}
               >
                 <Shapes size={12} /> Polygon
               </button>
               <button
                 type="button"
                 className={`b-inline-tool ${drawTool === "rectangle" ? "is-active" : ""}`}
+                aria-disabled={scanLocked || undefined}
                 onClick={() => activateTool("rectangle")}
-                title="Drag a bounding box"
+                title={scanLocked ? "Close 2D Scan to draw box" : "Drag a bounding box"}
               >
                 <Square size={12} /> Box
               </button>
               <button
                 type="button"
                 className={`b-inline-tool ${drawTool === "freehand" ? "is-active" : ""}`}
+                aria-disabled={scanLocked || undefined}
                 onClick={() => activateTool("freehand")}
-                title="Sketch freehand boundary"
+                title={scanLocked ? "Close 2D Scan to sketch boundary" : "Sketch freehand boundary"}
               >
                 <PenTool size={12} /> Freehand
               </button>
               <button
                 type="button"
                 className="b-inline-tool"
-                onClick={undoPolygon}
+                onClick={() => {
+                  if (!scanLocked) undoPolygon();
+                }}
                 disabled={!canUndoPolygon}
-                title="Undo region edit"
+                aria-disabled={scanLocked || undefined}
+                title={scanLocked ? "Close 2D Scan to undo edit" : "Undo region edit"}
                 aria-label="Undo region edit"
               >
                 <Undo2 size={12} />
@@ -372,9 +406,12 @@ export default function ExplorePage() {
               <button
                 type="button"
                 className="b-inline-tool"
-                onClick={redoPolygon}
+                onClick={() => {
+                  if (!scanLocked) redoPolygon();
+                }}
                 disabled={!canRedoPolygon}
-                title="Redo region edit"
+                aria-disabled={scanLocked || undefined}
+                title={scanLocked ? "Close 2D Scan to redo edit" : "Redo region edit"}
                 aria-label="Redo region edit"
               >
                 <Redo2 size={12} />
@@ -382,9 +419,12 @@ export default function ExplorePage() {
               <button
                 type="button"
                 className="b-inline-tool"
-                onClick={clearSelection}
+                onClick={() => {
+                  if (!scanLocked) clearSelection();
+                }}
                 disabled={selection.polygon.length === 0}
-                title="Clear selection"
+                aria-disabled={scanLocked || undefined}
+                title={scanLocked ? "Close 2D Scan to clear selection" : "Clear selection"}
                 aria-label="Clear selection"
               >
                 <RotateCcw size={12} />
@@ -398,6 +438,8 @@ export default function ExplorePage() {
                 territories={territories}
                 onSelectValue={selectPreset}
                 ariaLabel="Select territory or region"
+                disabled={scanLocked}
+                title={scanLocked ? "Close 2D Scan to switch territory" : undefined}
               />
             </label>
 
@@ -434,7 +476,7 @@ export default function ExplorePage() {
         </aside>
 
         <section className="b-explore-map" aria-label="Interactive Earth air quality canvas">
-          {drawTool !== "select" && (
+          {!scanLocked && drawTool !== "select" && (
             <div className="b-map-hint">
               {drawTool === "polygon"
                 ? "Click vertices to outline region · Click green start point or Finish"
@@ -476,9 +518,11 @@ export default function ExplorePage() {
             tool={drawTool}
             onToolComplete={() => setDrawTool("select")}
             onSelectStation={(_id, name, lat, lon) => {
+              if (scanLocked) return;
               flyTo({ lat, lon }, Math.max(4.8, camera.zoom));
               setQuery(name);
             }}
+            onScanLockChange={setScanLocked}
             showGrid={showGrid}
             showLabels={showLabels}
             showScaleBar

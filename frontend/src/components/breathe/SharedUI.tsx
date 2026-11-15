@@ -359,12 +359,16 @@ export function TerritorySelect({
   onSelectValue,
   className = "b-text-input",
   ariaLabel = "Active geographic territory",
+  disabled = false,
+  title,
 }: {
   selection: GeographicSelection;
   territories: Array<{ id: string; isoNumeric: string; name: string }>;
   onSelectValue: (value: string) => void;
   className?: string;
   ariaLabel?: string;
+  disabled?: boolean;
+  title?: string;
 }) {
   const curatedCodes = new Set(
     presetSelections.map((p) => p.territoryCode).filter((c): c is string => Boolean(c))
@@ -394,8 +398,10 @@ export function TerritorySelect({
       className={className}
       aria-label={ariaLabel}
       value={value}
+      disabled={disabled}
+      title={title}
       onChange={(e) => {
-        if (e.target.value !== "custom") onSelectValue(e.target.value);
+        if (!disabled && e.target.value !== "custom") onSelectValue(e.target.value);
       }}
     >
       <optgroup label="Curated territories">
