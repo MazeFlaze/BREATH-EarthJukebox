@@ -10,3 +10,11 @@ htmlcov
 .gitignore
 .env
 .env.local
+src/data/nasa-archive
+src/data/raw
+data/nasa-archive
+data/geos-cf-catalog
+storage
+*.nc
+*.nc4
+*.f32
