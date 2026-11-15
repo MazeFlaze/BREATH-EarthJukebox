@@ -383,6 +383,7 @@ export const CustomSelect = memo(function CustomSelect({
   searchPlaceholder = "Type to search...",
   disabled = false,
   compact = false,
+  dropdownAlign = "left",
   ariaLabel,
   title,
 }: {
@@ -395,6 +396,7 @@ export const CustomSelect = memo(function CustomSelect({
   searchPlaceholder?: string;
   disabled?: boolean;
   compact?: boolean;
+  dropdownAlign?: "left" | "right";
   ariaLabel?: string;
   title?: string;
 }) {
@@ -511,7 +513,11 @@ export const CustomSelect = memo(function CustomSelect({
       </button>
 
       {isOpen && (
-        <div className="b-combobox-dropdown">
+        <div
+          className={`b-combobox-dropdown ${
+            dropdownAlign === "right" ? "is-align-right" : ""
+          }`.trim()}
+        >
           {searchable && (
             <div className="b-combobox-search-header">
               <Search size={14} className="b-combobox-search-icon" aria-hidden="true" />
