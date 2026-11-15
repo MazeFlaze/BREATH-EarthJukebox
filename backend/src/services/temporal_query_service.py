@@ -21,6 +21,7 @@ from ..providers.geos_cf import GEOSCFProvider
 from ..repositories.dataset_repository import DatasetRepository
 from ..repositories.observation_repository import ObservationRepository
 from ..utils.logger import logger
+from ..utils.storage import get_portable_storage_path
 from .jukebox_helpers import (
     SUPPORTED_TEMPORAL_INTERVALS,
     build_normalization_meta,
@@ -202,7 +203,7 @@ class TemporalQueryService:
                         asset_id=asset_id,
                         dataset_source_id=dataset_id,
                         original_filename=file_path.name,
-                        storage_path=str(file_path),
+                        storage_path=get_portable_storage_path(file_path),
                         checksum_sha256="",
                         time_start=py_dt,
                         time_end=py_dt,

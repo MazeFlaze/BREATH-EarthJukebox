@@ -109,9 +109,10 @@ class RegionQueryService:
         py_dt = req_dt.to_pydatetime()
         asset = DatasetRepository.get_asset_by_time(db, request.datasetId, py_dt)
         file_path: Optional[Path] = None
-        if asset and Path(asset.storage_path).exists():
-            file_path = Path(asset.storage_path)
-        else:
+        if asset:
+            file_path = asset.resolve_path()
+
+        if file_path is None:
             candidate = settings.DATA_STORAGE_ROOT / self.provider.format_granule_filename(py_dt)
             if candidate.exists():
                 file_path = candidate
