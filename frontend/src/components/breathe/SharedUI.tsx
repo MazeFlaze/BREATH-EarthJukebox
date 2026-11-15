@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { dataSourceUrl, formatUtc, getLayerDefinition, layers, presetSelections, timeSlots } from "@/lib/breatheData";
 import type { BasemapMode, GeographicSelection, LayerKey } from "@/types/breathe";
+import { AirflowLogo } from "@/components/landing/AirflowLogo";
 
 const BASEMAP_OPTIONS: Array<{ value: BasemapMode; label: string }> = [
   { value: "territories", label: "Territories" },
@@ -74,11 +75,7 @@ export function SiteHeader() {
   return (
     <header className="b-header">
       <Link href="/" className="b-brand" aria-label="BREATHE Home">
-        <span className="b-brand-mark" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-        </span>
+        <AirflowLogo size={37} />
         <span className="b-brand-name">BREATHE</span>
         <span className="b-brand-meta">Earth Air Quality Sonification</span>
       </Link>
