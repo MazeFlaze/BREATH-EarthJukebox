@@ -18,7 +18,7 @@ services:
       - DEBUG=False
       - CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000"]
     volumes:
-      - backend-data:/app/data/raw
+      - backend-data:/app/src/data/raw
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
       interval: 30s
@@ -39,7 +39,8 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - HOSTNAME=0.0.0.0
+      - BACKEND_API_URL=http://backend:8000
     depends_on:
       backend:
         condition: service_healthy
