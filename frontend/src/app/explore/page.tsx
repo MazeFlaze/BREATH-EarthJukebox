@@ -19,7 +19,21 @@ import {
   Tag,
   Undo2,
 } from "lucide-react";
-import { GeoMap, type MapDrawTool } from "@/components/breathe/GeoMap";
+import dynamic from "next/dynamic";
+import type { MapDrawTool } from "@/components/breathe/GeoMap";
+import { GlobeLoadingOverlay } from "@/components/breathe/GlobeLoadingOverlay";
+
+const GeoMap = dynamic(
+  () => import("@/components/breathe/GeoMap").then((mod) => mod.GeoMap),
+  {
+    ssr: false,
+    loading: () => (
+      <div style={{ position: "relative", width: "100%", height: "100%", minHeight: "650px" }}>
+        <GlobeLoadingOverlay visible={true} isLightBasemap={true} label="Loading 3D Earth globe" />
+      </div>
+    ),
+  }
+);
 import {
   BasemapSwitcher,
   DataBadge,

@@ -1,5 +1,5 @@
-import source from "@/data/observations.json";
-import { approximateAreaKm2, computeBounds, computeCentroid } from "@/lib/geoUtils";
+import source from "../data/observations.json";
+import { approximateAreaKm2, computeBounds, computeCentroid } from "./geoUtils";
 import type {
   GalleryWork,
   GeographicSelection,

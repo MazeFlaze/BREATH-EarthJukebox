@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "motion/react";
 import {
   ArrowRight,
+  Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Eye,
@@ -13,6 +15,7 @@ import {
   Menu,
   Pause,
   Play,
+  Search,
   Volume2,
   X,
 } from "lucide-react";
@@ -87,8 +90,14 @@ export function SiteHeader() {
             <Link
               key={item.href}
               href={item.href}
+              prefetch={true}
               className={active ? "is-active" : undefined}
               onClick={() => setMobileOpen(false)}
+              onMouseEnter={() => {
+                if (item.href === "/explore" || item.href === "/studio") {
+                  import("@/components/breathe/GeoMap");
+                }
+              }}
             >
               <span>{item.label}</span>
               {active && (
@@ -353,7 +362,260 @@ export function SectionCaption({ children }: { children: React.ReactNode }) {
   return <div className="b-section-caption">{children}</div>;
 }
 
-export function TerritorySelect({
+const CURATED_TERRITORY_CODES = new Set(
+  presetSelections.map((p) => p.territoryCode).filter((c): c is string => Boolean(c))
+);
+
+export interface ComboboxOption {
+  value: string;
+  label: string;
+  group?: string;
+  subtitle?: string;
+}
+
+export const CustomSelect = memo(function CustomSelect({
+  value,
+  options,
+  onChange,
+  className = "",
+  placeholder = "Select an option...",
+  searchable = true,
+  searchPlaceholder = "Type to search...",
+  disabled = false,
+  compact = false,
+  ariaLabel,
+  title,
+}: {
+  value: string;
+  options: ComboboxOption[];
+  onChange: (val: string) => void;
+  className?: string;
+  placeholder?: string;
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  disabled?: boolean;
+  compact?: boolean;
+  ariaLabel?: string;
+  title?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const selectedOption = useMemo(
+    () => options.find((opt) => opt.value === value),
+    [options, value]
+  );
+
+  const query = searchQuery.trim().toLowerCase();
+
+  const filteredOptions = useMemo(() => {
+    if (!query) return options;
+    return options.filter(
+      (opt) =>
+        opt.label.toLowerCase().includes(query) ||
+        (opt.subtitle && opt.subtitle.toLowerCase().includes(query)) ||
+        (opt.group && opt.group.toLowerCase().includes(query))
+    );
+  }, [options, query]);
+
+  // Group filtered options if groups exist
+  const grouped = useMemo(() => {
+    const groups: { [key: string]: ComboboxOption[] } = {};
+    const ungrouped: ComboboxOption[] = [];
+
+    for (const opt of filteredOptions) {
+      if (opt.group) {
+        if (!groups[opt.group]) groups[opt.group] = [];
+        groups[opt.group].push(opt);
+      } else {
+        ungrouped.push(opt);
+      }
+    }
+    return { groups, ungrouped };
+  }, [filteredOptions]);
+
+  // Outside click handler
+  useEffect(() => {
+    if (!isOpen) return;
+    function handlePointerDown(e: MouseEvent | TouchEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (isOpen) {
+      if (searchable) {
+        const timer = setTimeout(() => {
+          searchInputRef.current?.focus();
+        }, 50);
+        return () => clearTimeout(timer);
+      }
+    } else {
+      setSearchQuery("");
+    }
+  }, [isOpen, searchable]);
+
+  const handleSelect = (val: string) => {
+    if (disabled) return;
+    onChange(val);
+    setIsOpen(false);
+    setSearchQuery("");
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className={`b-combobox ${compact ? "is-compact" : ""} ${className}`.trim()}
+    >
+      <button
+        type="button"
+        className={`b-combobox-trigger ${isOpen ? "is-open" : ""} ${
+          disabled ? "is-disabled" : ""
+        }`}
+        aria-label={ariaLabel || placeholder}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        disabled={disabled}
+        title={title}
+        onClick={() => {
+          if (!disabled) setIsOpen((prev) => !prev);
+        }}
+        onKeyDown={(e) => {
+          if (disabled) return;
+          if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setIsOpen(true);
+          } else if (e.key === "Escape") {
+            setIsOpen(false);
+          }
+        }}
+      >
+        <span className="b-combobox-current-text">
+          {selectedOption ? selectedOption.label : placeholder}
+        </span>
+        <span className="b-combobox-icons">
+          <span className={`b-combobox-chevron ${isOpen ? "is-open" : ""}`} aria-hidden="true">
+            <ChevronDown size={14} />
+          </span>
+        </span>
+      </button>
+
+      {isOpen && (
+        <div className="b-combobox-dropdown">
+          {searchable && (
+            <div className="b-combobox-search-header">
+              <Search size={14} className="b-combobox-search-icon" aria-hidden="true" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                className="b-combobox-search-input"
+                placeholder={searchPlaceholder}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setIsOpen(false);
+                  }
+                }}
+                aria-label="Filter options"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  className="b-combobox-search-clear"
+                  onClick={() => setSearchQuery("")}
+                  aria-label="Clear filter"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="b-combobox-list" role="listbox" aria-label={ariaLabel || placeholder}>
+            {Object.entries(grouped.groups).map(([groupTitle, groupOpts]) => (
+              <div key={groupTitle}>
+                <div className="b-combobox-group-title">{groupTitle}</div>
+                {groupOpts.map((opt) => {
+                  const isSelected = opt.value === value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="option"
+                      aria-selected={isSelected}
+                      className={`b-combobox-option ${isSelected ? "is-selected" : ""}`}
+                      onClick={() => handleSelect(opt.value)}
+                    >
+                      <div>
+                        <span>{opt.label}</span>
+                        {opt.subtitle && <small style={{ display: "block", color: "var(--muted)", fontSize: "10px" }}>{opt.subtitle}</small>}
+                      </div>
+                      {isSelected && (
+                        <span className="b-combobox-option-check" aria-hidden="true">
+                          <Check size={14} />
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+
+            {grouped.ungrouped.length > 0 && (
+              <div>
+                {Object.keys(grouped.groups).length > 0 && (
+                  <div className="b-combobox-group-title">Other</div>
+                )}
+                {grouped.ungrouped.map((opt) => {
+                  const isSelected = opt.value === value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="option"
+                      aria-selected={isSelected}
+                      className={`b-combobox-option ${isSelected ? "is-selected" : ""}`}
+                      onClick={() => handleSelect(opt.value)}
+                    >
+                      <div>
+                        <span>{opt.label}</span>
+                        {opt.subtitle && <small style={{ display: "block", color: "var(--muted)", fontSize: "10px" }}>{opt.subtitle}</small>}
+                      </div>
+                      {isSelected && (
+                        <span className="b-combobox-option-check" aria-hidden="true">
+                          <Check size={14} />
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {filteredOptions.length === 0 && (
+              <div className="b-combobox-empty">
+                No matching options
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+});
+
+export const TerritorySelect = memo(function TerritorySelect({
   selection,
   territories,
   onSelectValue,
@@ -370,10 +632,15 @@ export function TerritorySelect({
   disabled?: boolean;
   title?: string;
 }) {
-  const curatedCodes = new Set(
-    presetSelections.map((p) => p.territoryCode).filter((c): c is string => Boolean(c))
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const additionalTerritories = useMemo(
+    () => territories.filter((t) => !CURATED_TERRITORY_CODES.has(t.isoNumeric)),
+    [territories]
   );
-  const additionalTerritories = territories.filter((t) => !curatedCodes.has(t.isoNumeric));
 
   const matchedPreset = presetSelections.find(
     (p) =>
@@ -391,39 +658,198 @@ export function TerritorySelect({
         )
       : undefined;
 
-  const value = matchedPreset?.id ?? matchedOther?.id ?? "custom";
+  const activeValue = matchedPreset?.id ?? matchedOther?.id ?? "custom";
+  const activeLabel = matchedPreset?.name ?? matchedOther?.name ?? selection.name;
+
+  // Filter options based on user input
+  const query = searchQuery.trim().toLowerCase();
+
+  const filteredCurated = useMemo(() => {
+    if (!query) return presetSelections;
+    return presetSelections.filter((p) => p.name.toLowerCase().includes(query));
+  }, [query]);
+
+  const filteredAdditional = useMemo(() => {
+    if (!query) return additionalTerritories;
+    return additionalTerritories.filter((t) => t.name.toLowerCase().includes(query));
+  }, [query, additionalTerritories]);
+
+  const hasResults = filteredCurated.length > 0 || filteredAdditional.length > 0;
+
+  // Close on outside click
+  useEffect(() => {
+    if (!isOpen) return;
+    function handlePointerDown(e: MouseEvent | TouchEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+    };
+  }, [isOpen]);
+
+  // Focus search input when opened
+  useEffect(() => {
+    if (isOpen) {
+      const timer = setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 50);
+      return () => clearTimeout(timer);
+    } else {
+      setSearchQuery("");
+    }
+  }, [isOpen]);
+
+  const handleSelect = (id: string) => {
+    if (disabled || id === "custom") return;
+    onSelectValue(id);
+    setIsOpen(false);
+    setSearchQuery("");
+  };
 
   return (
-    <select
-      className={className}
-      aria-label={ariaLabel}
-      value={value}
-      disabled={disabled}
-      title={title}
-      onChange={(e) => {
-        if (!disabled && e.target.value !== "custom") onSelectValue(e.target.value);
-      }}
-    >
-      <optgroup label="Curated territories">
-        {presetSelections.map((preset) => (
-          <option key={preset.id} value={preset.id}>
-            {preset.name}
-          </option>
-        ))}
-      </optgroup>
-      {additionalTerritories.length > 0 && (
-        <optgroup label="All countries & territories">
-          {additionalTerritories.map((territory) => (
-            <option key={territory.id} value={territory.id}>
-              {territory.name}
-            </option>
-          ))}
-        </optgroup>
+    <div ref={containerRef} className="b-territory-combobox">
+      <button
+        type="button"
+        className={`${className} b-territory-trigger ${isOpen ? "is-open" : ""} ${
+          disabled ? "is-disabled" : ""
+        }`.trim()}
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        disabled={disabled}
+        title={title}
+        onClick={() => {
+          if (!disabled) setIsOpen((prev) => !prev);
+        }}
+        onKeyDown={(e) => {
+          if (disabled) return;
+          if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setIsOpen(true);
+          } else if (e.key === "Escape") {
+            setIsOpen(false);
+          }
+        }}
+      >
+        <span className="b-territory-current-text">{activeLabel}</span>
+        <span className="b-territory-icons">
+          <span className={`b-territory-chevron ${isOpen ? "is-open" : ""}`} aria-hidden="true">
+            <ChevronDown size={14} />
+          </span>
+        </span>
+      </button>
+
+      {isOpen && (
+        <div className="b-territory-dropdown">
+          <div className="b-territory-search-header">
+            <Search size={14} className="b-territory-search-icon" aria-hidden="true" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              className="b-territory-search-input"
+              placeholder="Search country or region..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  setIsOpen(false);
+                }
+              }}
+              aria-label="Filter territories"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                className="b-territory-search-clear"
+                onClick={() => setSearchQuery("")}
+                aria-label="Clear search query"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+
+          <div className="b-territory-list" role="listbox" aria-label={ariaLabel}>
+            {filteredCurated.length > 0 && (
+              <div>
+                <div className="b-territory-group-title">Curated territories</div>
+                {filteredCurated.map((preset) => {
+                  const isSelected = activeValue === preset.id;
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      role="option"
+                      aria-selected={isSelected}
+                      className={`b-territory-option ${isSelected ? "is-selected" : ""}`}
+                      onClick={() => handleSelect(preset.id)}
+                    >
+                      <span>{preset.name}</span>
+                      {isSelected && (
+                        <span className="b-territory-option-check" aria-hidden="true">
+                          <Check size={14} />
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {filteredAdditional.length > 0 && (
+              <div>
+                <div className="b-territory-group-title">All countries &amp; territories</div>
+                {filteredAdditional.map((territory) => {
+                  const isSelected = activeValue === territory.id;
+                  return (
+                    <button
+                      key={territory.id}
+                      type="button"
+                      role="option"
+                      aria-selected={isSelected}
+                      className={`b-territory-option ${isSelected ? "is-selected" : ""}`}
+                      onClick={() => handleSelect(territory.id)}
+                    >
+                      <span>{territory.name}</span>
+                      {isSelected && (
+                        <span className="b-territory-option-check" aria-hidden="true">
+                          <Check size={14} />
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {activeValue === "custom" && !query && (
+              <div>
+                <div className="b-territory-group-title">Custom selection</div>
+                <div className="b-territory-option is-selected">
+                  <span>{selection.name}</span>
+                  <span className="b-territory-option-check" aria-hidden="true">
+                    <Check size={14} />
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {!hasResults && (
+              <div className="b-territory-empty">
+                No regions matching &quot;{searchQuery}&quot;
+              </div>
+            )}
+          </div>
+        </div>
       )}
-      {value === "custom" && <option value="custom">{selection.name}</option>}
-    </select>
+    </div>
   );
-}
+});
 
 export function SiteFooter() {
   return (
