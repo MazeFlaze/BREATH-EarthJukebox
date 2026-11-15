@@ -210,14 +210,15 @@ class IngestionService:
         db: Session,
         variables: Optional[List[str]] = None,
         dry_run: bool = False,
+        step_hours: int = 1,
+        cleanup_after: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Pulls authentic granules from NASA NCCS DataShare over a time range
-        and ingests each into the system.
+        and ingests each into the system without evicting files mid-batch.
         """
         start_dt = pd.to_datetime(start_time, utc=True).to_pydatetime()
         end_dt = pd.to_datetime(end_time, utc=True).to_pydatetime()
-        hours = pd.date_range(start=start_dt, end=end_dt, freq="1h")
         if start_dt > end_dt:
             raise ValueError("Start time must not exceed end time")
         if any((dt.minute != 30 or dt.second or dt.microsecond) for dt in (start_dt, end_dt)):
@@ -225,6 +226,8 @@ class IngestionService:
         unknown = set(variables or []) - set(self.provider.list_variables())
         if unknown:
             raise ValueError(f"Unsupported variables: {sorted(unknown)}")
+        freq = f"{max(1, int(step_hours))}h"
+        hours = pd.date_range(start=start_dt, end=end_dt, freq=freq)
 
         results = []
         for index, h in enumerate(hours):
@@ -239,13 +242,17 @@ class IngestionService:
                 continue
 
             try:
-                local_file = self.provider.fetch_granule(iso_time)
+                local_file = self.provider.fetch_granule(iso_time, auto_cleanup=False)
                 res = self.ingest_local_file(local_file, db=db, dry_run=False)
                 results.append(res)
             except Exception as e:
                 db.rollback()
                 logger.error(f"Failed remote ingest for {iso_time}: {e}")
                 results.append({"timestamp": iso_time, "status": "failed", "error": str(e)})
+
+        if not dry_run and cleanup_after:
+            keep_count = max(settings.MAX_RAW_FILES_TO_KEEP, len(hours))
+            self.provider.cleanup_old_granules(max_files=keep_count)
 
         return results
 

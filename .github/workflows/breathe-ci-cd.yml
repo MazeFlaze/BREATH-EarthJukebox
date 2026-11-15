@@ -21,25 +21,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  frontend-ci:
-    name: Frontend contracts and audio parity
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run test:demo
-      - run: npm run test:contracts
-
   backend-ci:
     name: Backend Test Suite (FastAPI & Pytest)
     runs-on: ubuntu-latest
@@ -80,6 +61,42 @@ jobs:
           PYTHONPATH: src:.
         run: |
           pytest -v tests/
+
+  frontend-ci:
+    name: Frontend Checks (Lint, Typecheck, Tests & Build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Run Lint & Typecheck
+        run: |
+          npm run lint
+          npm run typecheck
+
+      - name: Run Frontend Unit Tests
+        run: npm run test:contracts
+
+      - name: Run Scientific Audio and Contract Parity Tests
+        run: npm run test:demo
+
+      - name: Build Production Next.js Bundle
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run build
 
   deploy-backend:
     name: CD - Deploy Backend to Azure Container Apps (Scale-to-Zero)
@@ -141,6 +158,7 @@ jobs:
           ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+          CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           echo "=========================================================="
@@ -151,6 +169,17 @@ jobs:
           echo "=========================================================="
 
           az extension add --name containerapp --upgrade --yes
+
+          # Resolve effective CORS_ORIGINS (custom vars override OR auto-discover existing frontend FQDN)
+          EFFECTIVE_CORS="${CORS_ORIGINS}"
+          if [ -z "$EFFECTIVE_CORS" ]; then
+            EXISTING_FE_FQDN=$(az containerapp show --name breathe-frontend --resource-group "${RESOURCE_GROUP}" --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null || echo "")
+            if [ -n "$EXISTING_FE_FQDN" ]; then
+              EFFECTIVE_CORS="https://${EXISTING_FE_FQDN},http://localhost:3000,http://127.0.0.1:3000"
+            else
+              EFFECTIVE_CORS="http://localhost:3000,http://127.0.0.1:3000"
+            fi
+          fi
 
           # Determine location from ACR or Resource Group (ensuring allowed region such as eastasia)
           LOCATION="${{ vars.AZURE_LOCATION }}"
@@ -194,6 +223,7 @@ jobs:
               --set-env-vars \
                 DATABASE_URL="${DATABASE_URL}" \
                 DATABASE_URL_UNPOOLED="${DATABASE_URL_UNPOOLED}" \
+                CORS_ORIGINS="${EFFECTIVE_CORS}" \
                 HOST="0.0.0.0" \
                 PORT="8000" \
                 ENVIRONMENT="production" \
@@ -217,6 +247,7 @@ jobs:
               --env-vars \
                 DATABASE_URL="${DATABASE_URL}" \
                 DATABASE_URL_UNPOOLED="${DATABASE_URL_UNPOOLED}" \
+                CORS_ORIGINS="${EFFECTIVE_CORS}" \
                 HOST="0.0.0.0" \
                 PORT="8000" \
                 ENVIRONMENT="production" \
@@ -240,44 +271,67 @@ jobs:
           echo "- **Image:** \`${BACKEND_IMAGE}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Scale Policy:** \`minReplicas=0\` (Scale-to-Zero on idle)" >> $GITHUB_STEP_SUMMARY
 
-  # NOTE: Frontend CD is ready below, currently disabled until frontend development is finalized.
-  # To enable frontend auto-deploy, set vars.ENABLE_FRONTEND_DEPLOY to 'true' in GitHub Settings.
+  # Frontend CD deploys to Azure Container Apps when ENABLE_FRONTEND_DEPLOY == 'true'
+  # or when manually triggered via workflow_dispatch with deploy_target == 'both'.
   deploy-frontend:
     name: CD - Deploy Frontend to Azure Container Apps
     if: >-
       github.ref == 'refs/heads/main' &&
       github.event_name != 'pull_request' &&
-      vars.ENABLE_FRONTEND_DEPLOY == 'true'
-    needs: [backend-ci]
+      (vars.ENABLE_FRONTEND_DEPLOY == 'true' || (github.event_name == 'workflow_dispatch' && inputs.deploy_target == 'both'))
+    needs: [backend-ci, frontend-ci, deploy-backend]
     runs-on: ubuntu-latest
     environment: production
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Validate Azure Configuration Secrets
+        id: check-secrets
+        run: |
+          if [ -z "${{ secrets.AZURE_CREDENTIALS }}" ] || [ -z "${{ secrets.ACR_LOGIN_SERVER }}" ]; then
+            echo "::warning ::Azure secrets are not fully configured. Skipping frontend production deployment."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Log in to Azure
+        if: steps.check-secrets.outputs.configured == 'true'
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
+
       - name: Set up Docker Buildx
+        if: steps.check-secrets.outputs.configured == 'true'
         uses: docker/setup-buildx-action@v3
+
       - name: Log in to ACR
+        if: steps.check-secrets.outputs.configured == 'true'
         uses: azure/docker-login@v2
         with:
           login-server: ${{ secrets.ACR_LOGIN_SERVER }}
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
+
       - name: Build and Push Frontend Image
+        if: steps.check-secrets.outputs.configured == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ./frontend
           file: ./frontend/Dockerfile
           push: true
+          build-args: |
+            NEXT_PUBLIC_BACKEND_URL=${{ vars.NEXT_PUBLIC_BACKEND_URL || '' }}
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL || '' }}
           tags: |
             ${{ secrets.ACR_LOGIN_SERVER }}/breathe-frontend:${{ github.sha }}
             ${{ secrets.ACR_LOGIN_SERVER }}/breathe-frontend:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
       - name: Deploy Frontend Container App
+        if: steps.check-secrets.outputs.configured == 'true'
         env:
           RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP || 'rg-breathe' }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
@@ -287,10 +341,15 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           az extension add --name containerapp --upgrade --yes
-          ENVIRONMENT_NAME="cae-breathe"
+          EXISTING_ENV=$(az containerapp env list --resource-group "${RESOURCE_GROUP}" --query "[0].name" -o tsv 2>/dev/null || echo "")
+          ENVIRONMENT_NAME="${EXISTING_ENV:-cae-breathe}"
           FRONTEND_APP="breathe-frontend"
           FRONTEND_IMAGE="${ACR_LOGIN_SERVER}/${FRONTEND_APP}:${IMAGE_TAG}"
           BACKEND_FQDN=$(az containerapp show --name breathe-backend --resource-group "${RESOURCE_GROUP}" --query properties.configuration.ingress.fqdn -o tsv || echo "")
+          BACKEND_URL=""
+          if [ -n "${BACKEND_FQDN}" ]; then
+            BACKEND_URL="https://${BACKEND_FQDN}"
+          fi
 
           if az containerapp show --name "${FRONTEND_APP}" --resource-group "${RESOURCE_GROUP}" > /dev/null 2>&1; then
             az containerapp update \
@@ -298,7 +357,7 @@ jobs:
               --resource-group "${RESOURCE_GROUP}" \
               --image "${FRONTEND_IMAGE}" \
               --set-env-vars \
-                NEXT_PUBLIC_API_URL="https://${BACKEND_FQDN}" \
+                BACKEND_API_URL="${BACKEND_URL}" \
                 DATABASE_URL="${DATABASE_URL}" \
                 PORT="3000" \
                 NODE_ENV="production"
@@ -318,8 +377,22 @@ jobs:
               --cpu 0.5 \
               --memory 1.0Gi \
               --env-vars \
-                NEXT_PUBLIC_API_URL="https://${BACKEND_FQDN}" \
+                BACKEND_API_URL="${BACKEND_URL}" \
                 DATABASE_URL="${DATABASE_URL}" \
                 PORT="3000" \
                 NODE_ENV="production"
           fi
+
+          FRONTEND_FQDN=$(az containerapp show --name "${FRONTEND_APP}" --resource-group "${RESOURCE_GROUP}" --query properties.configuration.ingress.fqdn -o tsv)
+          echo "=========================================================="
+          echo " Frontend Deployment to Azure Container Apps completed!"
+          echo " Frontend URL:      https://${FRONTEND_FQDN}"
+          echo " Proxy Healthcheck: https://${FRONTEND_FQDN}/api/v1/health"
+          echo "=========================================================="
+
+          echo "### 🌐 Azure Frontend Deployment Succeeded" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Frontend App:** [https://${FRONTEND_FQDN}](https://${FRONTEND_FQDN})" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Proxy Healthcheck:** [https://${FRONTEND_FQDN}/api/v1/health](https://${FRONTEND_FQDN}/api/v1/health)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Backend Upstream:** \`${BACKEND_URL:-unset}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Image:** \`${FRONTEND_IMAGE}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Scale Policy:** \`minReplicas=0\` (Scale-to-Zero on idle)" >> "$GITHUB_STEP_SUMMARY"

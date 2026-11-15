@@ -339,6 +339,15 @@ export function ParticleField({ spec }: { spec?: AudioCompositionSpec }) {
       const frame = sonificationService.getVisualFrame();
       const playingNow =
         frame.playbackState === "playing" && (!spec || frame.activeCompositionId === spec.id);
+
+      if (canvas.offsetParent === null) {
+        // Skip canvas drawing while hidden; only continue RAF polling if playback or initial warmup needs it
+        if (!reducedMotion && (playingNow || timeMs < 500)) {
+          raf = window.requestAnimationFrame(draw);
+        }
+        return;
+      }
+
       const rms = playingNow ? frame.rms : 0.14;
       const bright = playingNow ? frame.spectralCentroid : brightness;
 
@@ -395,6 +404,7 @@ export function AudioTransport({
   label,
   spec,
   compact = false,
+  hideContext = false,
   onStepSlot,
 }: {
   title: string;
@@ -404,6 +414,7 @@ export function AudioTransport({
   label?: string;
   spec?: AudioCompositionSpec;
   compact?: boolean;
+  hideContext?: boolean;
   onStepSlot?: (delta: number) => void;
 }) {
   const {
@@ -443,8 +454,16 @@ export function AudioTransport({
   const activeTime = isPlayingThis ? formatClock(clock.elapsedSec) : "0:00";
   const totalTime = formatClock(spec?.durationSec ?? 30);
 
+  const transportClassName = [
+    "b-transport",
+    compact ? "b-transport-compact" : "",
+    hideContext ? "b-transport-minimal" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className={compact ? "b-transport b-transport-compact" : "b-transport"}>
+    <div className={transportClassName}>
       <div className="b-transport-controls">
         {!compact && (
           <button
@@ -480,11 +499,13 @@ export function AudioTransport({
         )}
       </div>
 
-      <div className="b-transport-content">
-        <strong>{title}</strong>
-        <Waveform compact spec={spec} />
-        {label && <small className="b-muted">{label}</small>}
-      </div>
+      {!hideContext && (
+        <div className="b-transport-content">
+          <strong title={title}>{title}</strong>
+          <Waveform compact spec={spec} />
+          {label && <small className="b-muted">{label}</small>}
+        </div>
+      )}
 
       <span className="b-transport-time">
         {activeTime} / {totalTime}

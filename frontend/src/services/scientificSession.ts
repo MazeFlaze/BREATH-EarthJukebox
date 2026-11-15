@@ -1,10 +1,9 @@
 import type { Catalog } from './geosCfCatalog';
+import { resolveBackendRequestUrl } from './backendApi';
 import type { EncodedArray, ScientificFrame, ScientificMapView, ScientificPlan, ScientificPlanWire, ScientificSelection } from '@/types/scientificSession';
 
 export function scientificApiBase() {
-  const raw = process.env.NEXT_PUBLIC_BACKEND_URL?.trim() || process.env.NEXT_PUBLIC_API_URL?.trim();
-  const base = raw && !['undefined', 'null'].includes(raw) ? raw.replace(/\/+$/, '').replace(/\/api\/v1$/i, '') : 'http://localhost:8000';
-  return base + '/api/v1/scientific';
+  return resolveBackendRequestUrl('/api/v1/scientific');
 }
 async function request<T>(path: string, signal: AbortSignal, body?: unknown): Promise<T> {
   const response = await fetch(scientificApiBase() + path, { signal, cache: 'no-store',

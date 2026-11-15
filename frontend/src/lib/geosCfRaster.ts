@@ -9,6 +9,10 @@ import {
   pointInPolygonCoords,
   serializePolygonRingsForApi,
 } from "./geoUtils";
+import {
+  fetchBackendTemporalSeries,
+  resolveBackendRequestUrl,
+} from "../services/backendApi";
 import type { GeoBounds, GeoPoint, LayerDefinition, LayerKey, RegionStats } from "@/types/breathe";
 
 type ColormapName = LayerDefinition["cmap"];
@@ -235,6 +239,112 @@ function decodeColormapNormalized(
 }
 
 /**
+ * Smooths display scalar norms using a separable 2D Gaussian/binomial filter [1, 4, 6, 4, 1] / 16
+ * with adaptive hole-infilling for inland missing data gaps.
+ * Dissolves 0.25-deg nearest-neighbor pcolormesh grid blocks and small inland missing spots into
+ * silky continuous gradients, while strictly preserving ocean masking boundaries (-1).
+ */
+export function smoothDisplayNorms(
+  norms: Float32Array,
+  width: number,
+  height: number
+): Float32Array {
+  // Infill isolated inland no-data gaps (holes) where cells are surrounded by valid data
+  // Ocean has few/no valid neighbors, while inland gaps are surrounded by valid land cells
+  const infilled = new Float32Array(norms);
+  for (let pass = 0; pass < 4; pass += 1) {
+    let filledCount = 0;
+    for (let y = 1; y < height - 1; y += 1) {
+      const rowOffset = y * width;
+      for (let x = 0; x < width; x += 1) {
+        const centerIdx = rowOffset + x;
+        if (infilled[centerIdx] !== undefined && infilled[centerIdx]! >= 0) continue;
+        let sum = 0;
+        let count = 0;
+        for (let dy = -1; dy <= 1; dy += 1) {
+          const nRow = (y + dy) * width;
+          for (let dx = -1; dx <= 1; dx += 1) {
+            if (dx === 0 && dy === 0) continue;
+            let nx = x + dx;
+            if (nx < 0) nx += width;
+            else if (nx >= width) nx -= width;
+            const v = infilled[nRow + nx];
+            if (v !== undefined && v >= 0) {
+              sum += v;
+              count += 1;
+            }
+          }
+        }
+        if (count >= 4) {
+          infilled[centerIdx] = sum / count;
+          filledCount += 1;
+        }
+      }
+    }
+    if (filledCount === 0) break;
+  }
+
+  const temp = new Float32Array(width * height);
+  const out = new Float32Array(width * height);
+  const weights = [1, 4, 6, 4, 1];
+
+  // Horizontal pass: kernel [1, 4, 6, 4, 1] / 16 on infilled data
+  for (let y = 0; y < height; y += 1) {
+    const rowOffset = y * width;
+    for (let x = 0; x < width; x += 1) {
+      const centerIdx = rowOffset + x;
+      const centerVal = infilled[centerIdx];
+      if (centerVal === undefined || centerVal < 0) {
+        temp[centerIdx] = -1;
+        continue;
+      }
+      let sum = 0;
+      let wSum = 0;
+      for (let k = -2; k <= 2; k += 1) {
+        let nx = x + k;
+        if (nx < 0) nx += width;
+        else if (nx >= width) nx -= width;
+        const v = infilled[rowOffset + nx];
+        if (v !== undefined && v >= 0) {
+          const w = weights[k + 2] ?? 1;
+          sum += v * w;
+          wSum += w;
+        }
+      }
+      temp[centerIdx] = wSum > 0 ? sum / wSum : centerVal;
+    }
+  }
+
+  // Vertical pass: kernel [1, 4, 6, 4, 1] / 16
+  for (let x = 0; x < width; x += 1) {
+    for (let y = 0; y < height; y += 1) {
+      const centerIdx = y * width + x;
+      const centerVal = temp[centerIdx];
+      if (centerVal === undefined || centerVal < 0) {
+        out[centerIdx] = -1;
+        continue;
+      }
+      let sum = 0;
+      let wSum = 0;
+      for (let k = -2; k <= 2; k += 1) {
+        const ny = y + k;
+        if (ny >= 0 && ny < height) {
+          const v = temp[ny * width + x];
+          if (v !== undefined && v >= 0) {
+            const w = weights[k + 2] ?? 1;
+            sum += v * w;
+            wSum += w;
+          }
+        }
+      }
+      out[centerIdx] = wSum > 0 ? sum / wSum : centerVal;
+    }
+  }
+
+  return out;
+}
+
+/**
  * Decodes a GEOS-CF frame once into a compact normalized Float32Array (-1 = masked)
  * while keeping display gap-filling isolated from measurement rasters.
  */
@@ -268,7 +378,8 @@ function getScalarGrid(
       const t = decodeColormapNormalized(data[idx], data[idx + 1], data[idx + 2], data[idx + 3], cmap);
       norms[i] = t === null ? -1 : t;
     }
-    return { width: raster.width, height: raster.height, norms };
+    const processedNorms = forDisplay ? smoothDisplayNorms(norms, raster.width, raster.height) : norms;
+    return { width: raster.width, height: raster.height, norms: processedNorms };
   })().catch(() => {
     scalarGridCache.delete(key);
     return null;
@@ -572,9 +683,10 @@ function getTileWorkerPool(): WorkerSlot[] | null {
   if (tileWorkerSlots) return tileWorkerSlots;
 
   const slots: WorkerSlot[] = [];
+  const RASTER_WORKER_VERSION = "20261115-smooth-v2";
   try {
     for (let i = 0; i < TILE_WORKER_COUNT; i += 1) {
-      const worker = new Worker("/workers/raster-tile-worker.js");
+      const worker = new Worker(`/workers/raster-tile-worker.js?v=${RASTER_WORKER_VERSION}`);
       const pending = new Map<number, WorkerPendingJob>();
       const slot: WorkerSlot = { worker, pending };
 
@@ -1308,6 +1420,7 @@ let backendUnavailableUntil = 0;
 
 export function resetBackendCircuitBreaker(): void {
   backendUnavailableUntil = 0;
+  pointSeriesCache.clear();
 }
 
 export function getBackendCircuitBreakerUntil(): number {
@@ -1334,6 +1447,38 @@ export interface BackendRegionResponse {
 }
 
 /**
+ * Links an optional caller AbortSignal to a per-request timeout AbortController so either
+ * external cancellation or timeout aborts the request cleanly without listener leaks.
+ */
+function createLinkedAbortController(
+  timeoutMs: number,
+  externalSignal?: AbortSignal
+): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const onExternalAbort = () => {
+    clearTimeout(timer);
+    controller.abort(externalSignal?.reason);
+  };
+
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      onExternalAbort();
+    } else {
+      externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      externalSignal?.removeEventListener("abort", onExternalAbort);
+    },
+  };
+}
+
+/**
  * Computes the 8-timestamp diurnal mean time series for any drawn polygon and active variable.
  * Queries backend /api/v1/jukebox/region with includeSeries: true when online, falling back
  * seamlessly to offline raster colormap sampling if unreachable, timed out, or returning empty.
@@ -1342,23 +1487,34 @@ export async function samplePolygonSeries(
   layerKey: LayerKey,
   polygon: GeoPoint[],
   boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon,
-  bounds?: GeoBounds
+  bounds?: GeoBounds,
+  targetTimestamp?: string,
+  signal?: AbortSignal
 ): Promise<number[]> {
+  if (signal?.aborted) {
+    return [];
+  }
+
   const layer = getLayerDefinition(layerKey);
   if (!layer.available || layerKey === "AOD") {
     return timeSlots.map(() => 0);
   }
 
   const runOfflineFallback = async (): Promise<number[]> => {
+    if (signal?.aborted) return [];
     const results = await Promise.all(
-      timeSlots.map((_, idx) => samplePolygonStats(layerKey, idx, polygon, boundaryGeometry))
+      timeSlots.map((_, idx) =>
+        signal?.aborted ? null : samplePolygonStats(layerKey, idx, polygon, boundaryGeometry)
+      )
     );
-    return results.map((stat) => (stat.mean !== null ? stat.mean : layer.vmin));
+    if (signal?.aborted) return [];
+    return results
+      .filter((stat): stat is RegionStats => stat !== null)
+      .map((stat) => (stat.mean !== null ? stat.mean : layer.vmin));
   };
 
-  const baseUrl = getBackendBaseUrl();
-  if (baseUrl && Date.now() >= backendUnavailableUntil) {
-    let timer: ReturnType<typeof setTimeout> | undefined;
+  if (Date.now() >= backendUnavailableUntil) {
+    let cleanupAbort: (() => void) | undefined;
     try {
       const effectiveBounds =
         bounds ??
@@ -1373,18 +1529,19 @@ export async function samplePolygonSeries(
       const lonMin = Number(Math.min(effectiveBounds.west, effectiveBounds.east).toFixed(4));
       const lonMax = Number(Math.max(effectiveBounds.west, effectiveBounds.east).toFixed(4));
 
-      const controller = new AbortController();
-      timer = setTimeout(() => controller.abort(), 2500);
+      const linkedAbort = createLinkedAbortController(5000, signal);
+      cleanupAbort = linkedAbort.cleanup;
       const serializedRings = serializePolygonRingsForApi(boundaryGeometry ?? polygon, 320);
-      const response = await fetch(`${baseUrl}/api/v1/jukebox/region`, {
+      const response = await fetch(resolveBackendRequestUrl("/api/v1/jukebox/region"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
+        signal: linkedAbort.signal,
         body: JSON.stringify({
           datasetId: "geos-cf-v2-aqc",
-          timestamp: timeSlots[0] ?? "2026-11-12T00:30:00Z",
+          timestamp: targetTimestamp ?? timeSlots[0] ?? "2026-11-12T00:30:00Z",
           variable: layerKey,
           includeSeries: true,
+          seriesStepHours: 3,
           bounds: {
             latMin,
             latMax,
@@ -1396,8 +1553,16 @@ export async function samplePolygonSeries(
         }),
       });
 
+      if (signal?.aborted) {
+        return [];
+      }
+
       if (response.ok) {
+        backendUnavailableUntil = 0;
         const payload = (await response.json()) as BackendRegionResponse;
+        if (signal?.aborted) {
+          return [];
+        }
         if (
           Array.isArray(payload.series) &&
           (payload.series.length === timeSlots.length || payload.series.length > 0) &&
@@ -1409,35 +1574,82 @@ export async function samplePolygonSeries(
         backendUnavailableUntil = Date.now() + 30000;
       }
     } catch {
+      if (signal?.aborted) {
+        return [];
+      }
       backendUnavailableUntil = Date.now() + 30000;
     } finally {
-      if (timer) clearTimeout(timer);
+      cleanupAbort?.();
     }
   }
 
+  if (signal?.aborted) {
+    return [];
+  }
   return runOfflineFallback();
 }
 
-const pointSeriesCache = new Map<string, number[]>();
+export interface PointSeriesResult {
+  values: number[];
+  sourceKind: "backend-temporal" | "geos-cf-raster";
+}
+
+const pointSeriesCache = new Map<string, PointSeriesResult>();
 
 /**
- * Lazily samples an 8-slot diurnal GEOS-CF curve at a geographic coordinate,
- * yielding between frames to keep UI interactions responsive.
+ * Samples a diurnal GEOS-CF curve at a geographic coordinate, preferring FastAPI
+ * /api/v1/jukebox/temporal when online and falling back cleanly to local raster PNGs.
  */
-export async function samplePointSeries(
+export async function samplePointSeriesDetailed(
   layerKey: LayerKey,
   lat: number,
   lon: number,
   fallbackValue?: number
-): Promise<number[]> {
+): Promise<PointSeriesResult> {
   const layer = getLayerDefinition(layerKey);
-  if (!layer.available || layerKey === "AOD") return [];
+  if (!layer.available || layerKey === "AOD") {
+    return { values: [], sourceKind: "geos-cf-raster" };
+  }
   const cacheKey = `${layerKey}:${lat.toFixed(2)}:${lon.toFixed(2)}`;
   const cached = pointSeriesCache.get(cacheKey);
   if (cached) return cached;
 
-  const span = layer.vmax - layer.vmin;
   const fallback = fallbackValue ?? layer.vmin;
+
+  if (Date.now() >= backendUnavailableUntil) {
+    const start = timeSlots[0] ?? "2026-11-12T00:30:00Z";
+    const end = timeSlots[timeSlots.length - 1] ?? "2026-11-12T21:30:00Z";
+    const remote = await fetchBackendTemporalSeries({
+      lat,
+      lon,
+      variable: layerKey,
+      start,
+      end,
+      interval: "3h",
+      normalizationMethod: "log_scale",
+      offlineOnly: true,
+    });
+    if (remote && remote.points.length > 0) {
+      const apiValues = remote.points
+        .map((pt) => pt.displayValue ?? pt.value)
+        .filter((v): v is number => typeof v === "number" && Number.isFinite(v))
+        .map((v) => Number(v.toFixed(1)));
+      if (apiValues.length >= 2) {
+        const result: PointSeriesResult = {
+          values: apiValues,
+          sourceKind: "backend-temporal",
+        };
+        if (pointSeriesCache.size >= 24) {
+          const oldest = pointSeriesCache.keys().next().value;
+          if (oldest !== undefined) pointSeriesCache.delete(oldest);
+        }
+        pointSeriesCache.set(cacheKey, result);
+        return result;
+      }
+    }
+  }
+
+  const span = layer.vmax - layer.vmin;
   const values: number[] = [];
   let validCount = 0;
 
@@ -1462,13 +1674,28 @@ export async function samplePointSeries(
     values.push(Number((layer.vmin + t * span).toFixed(1)));
   }
 
-  if (validCount === 0) return [];
+  if (validCount === 0) return { values: [], sourceKind: "geos-cf-raster" };
+  const result: PointSeriesResult = { values, sourceKind: "geos-cf-raster" };
   if (pointSeriesCache.size >= 24) {
     const oldest = pointSeriesCache.keys().next().value;
     if (oldest !== undefined) pointSeriesCache.delete(oldest);
   }
-  pointSeriesCache.set(cacheKey, values);
-  return values;
+  pointSeriesCache.set(cacheKey, result);
+  return result;
+}
+
+/**
+ * Lazily samples an 8-slot diurnal GEOS-CF curve at a geographic coordinate,
+ * yielding between frames to keep UI interactions responsive.
+ */
+export async function samplePointSeries(
+  layerKey: LayerKey,
+  lat: number,
+  lon: number,
+  fallbackValue?: number
+): Promise<number[]> {
+  const result = await samplePointSeriesDetailed(layerKey, lat, lon, fallbackValue);
+  return result.values;
 }
 
 /**
@@ -1480,22 +1707,26 @@ export async function fetchBackendRegionStats(
   timeIndex: number,
   bounds: GeoBounds,
   polygon: GeoPoint[],
-  boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon
+  boundaryGeometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon,
+  signal?: AbortSignal
 ): Promise<RegionStats> {
+  if (signal?.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+
   const layer = getLayerDefinition(layerKey);
   if (!layer.available || layerKey === "AOD") {
     return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
   }
 
-  const baseUrl = getBackendBaseUrl();
   const safeIndex = Math.max(0, Math.min(timeSlots.length - 1, timeIndex));
   const timestamp = timeSlots[safeIndex] ?? "2026-11-12T00:30:00Z";
 
-  if (!baseUrl || Date.now() < backendUnavailableUntil) {
+  if (Date.now() < backendUnavailableUntil) {
     return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
   }
 
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cleanupAbort: (() => void) | undefined;
   try {
     const effectiveBounds =
       bounds ??
@@ -1510,13 +1741,13 @@ export async function fetchBackendRegionStats(
     const lonMin = Number(Math.min(effectiveBounds.west, effectiveBounds.east).toFixed(4));
     const lonMax = Number(Math.max(effectiveBounds.west, effectiveBounds.east).toFixed(4));
 
-    const controller = new AbortController();
-    timer = setTimeout(() => controller.abort(), 2200);
+    const linkedAbort = createLinkedAbortController(3500, signal);
+    cleanupAbort = linkedAbort.cleanup;
     const serializedRings = serializePolygonRingsForApi(boundaryGeometry ?? polygon, 320);
-    const response = await fetch(`${baseUrl}/api/v1/jukebox/region`, {
+    const response = await fetch(resolveBackendRequestUrl("/api/v1/jukebox/region"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
+      signal: linkedAbort.signal,
       body: JSON.stringify({
         datasetId: "geos-cf-v2-aqc",
         timestamp,
@@ -1532,12 +1763,21 @@ export async function fetchBackendRegionStats(
       }),
     });
 
+    if (signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+
     if (!response.ok) {
       backendUnavailableUntil = Date.now() + 30000;
       return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
     }
 
+    backendUnavailableUntil = 0;
+
     const payload = (await response.json()) as BackendRegionResponse;
+    if (signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
     const summary = payload.summary;
     const rawMean = summary?.displayMean ?? summary?.mean;
     if (!summary || rawMean == null || Number.isNaN(rawMean)) {
@@ -1571,11 +1811,14 @@ export async function fetchBackendRegionStats(
       isMock: Boolean(payload.isMock),
       loading: false,
     };
-  } catch {
+  } catch (err: unknown) {
+    if (signal?.aborted) {
+      throw err instanceof Error ? err : new DOMException("Aborted", "AbortError");
+    }
     backendUnavailableUntil = Date.now() + 30000;
     return samplePolygonStats(layerKey, timeIndex, polygon, boundaryGeometry);
   } finally {
-    if (timer) clearTimeout(timer);
+    cleanupAbort?.();
   }
 }
 

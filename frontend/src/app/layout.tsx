@@ -14,6 +14,9 @@ export const metadata: Metadata = {
   title: "BREATHE — Earth Air Quality Sonification",
   description:
     "Explore atmospheric data from NASA Earth Observations and translate air quality into sound.",
+  icons: {
+    icon: "/icon.svg",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

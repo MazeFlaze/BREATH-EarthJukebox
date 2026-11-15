@@ -15,11 +15,17 @@ import {
   formatUtc,
   galleryWorks,
   getLayerDefinition,
+  getRegionLayerRestriction,
+  type LayerRegionRestriction,
   makeSelection,
   presetSelections,
   timeSlots,
 } from "@/lib/breatheData";
-import { fetchBackendRegionStats, samplePolygonSeries } from "@/lib/geosCfRaster";
+import {
+  fetchBackendRegionStats,
+  resetBackendCircuitBreaker,
+  samplePolygonSeries,
+} from "@/lib/geosCfRaster";
 import { zoomForBounds } from "@/lib/geoUtils";
 import {
   buildResolvedTerritory,
@@ -29,6 +35,13 @@ import {
   loadWorldBoundariesQuick,
   resolveTerritoryByCodeOrName,
 } from "@/lib/worldBoundaries";
+import {
+  checkBackendHealth,
+  fetchBackendLocations,
+  fetchDatasetAvailability,
+  type BackendConnectionState,
+} from "@/services/backendApi";
+import { dataService } from "@/services/dataService";
 import { sonificationService } from "@/services/sonificationService";
 import type {
   AudioCompositionSpec,
@@ -125,11 +138,15 @@ interface BreatheContextValue {
   mapping: SonificationMapping;
   regionStats: RegionStats;
   regionSeries: number[];
+  backendStatus: BackendConnectionState;
+  availableTimestamps: string[];
+  refreshBackendConnection: () => Promise<void>;
   savedWorks: GalleryWork[];
   bookmarkedIds: string[];
   canUndoPolygon: boolean;
   canRedoPolygon: boolean;
   setActiveLayer: (layer: LayerKey) => void;
+  getLayerRestriction: (layer: LayerKey) => LayerRegionRestriction | null;
   setBasemapMode: (mode: BasemapMode) => void;
   setLayerVisible: (visible: boolean) => void;
   setLayerOpacity: (opacity: number) => void;
@@ -172,7 +189,30 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
   const [historyIndex, setHistoryIndex] = useState(0);
   const selection = selectionHistory[historyIndex] ?? DEFAULT_SELECTION;
 
-  const [activeLayer, setActiveLayer] = useState<LayerKey>("PM25_RH35");
+  const [activeLayerState, setActiveLayerState] = useState<LayerKey>("PM25_RH35");
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+
+  const activeLayerRestriction = getRegionLayerRestriction(selection, activeLayerState);
+  const activeLayer = activeLayerRestriction
+    ? activeLayerRestriction.fallbackLayer
+    : activeLayerState;
+
+  const setActiveLayer = useCallback((nextLayer: LayerKey) => {
+    const restriction = getRegionLayerRestriction(selectionRef.current, nextLayer);
+    setActiveLayerState(restriction ? restriction.fallbackLayer : nextLayer);
+  }, []);
+
+  const getLayerRestriction = useCallback(
+    (layer: LayerKey) => getRegionLayerRestriction(selection, layer),
+    [selection]
+  );
+
+  useEffect(() => {
+    if (activeLayerRestriction) {
+      setActiveLayerState(activeLayerRestriction.fallbackLayer);
+    }
+  }, [activeLayerRestriction]);
   const [basemapMode, setBasemapMode] = useState<BasemapMode>("territories");
   const [layerVisible, setLayerVisible] = useState(true);
   const [layerOpacity, setLayerOpacity] = useState(0.76);
@@ -198,11 +238,68 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
     loading: true,
   }));
 
+  const [backendStatus, setBackendStatus] = useState<BackendConnectionState>("checking");
+  const [availableTimestamps, setAvailableTimestamps] = useState<string[]>([...timeSlots]);
+
+  const refreshBackendConnection = useCallback(async () => {
+    setBackendStatus("checking");
+    resetBackendCircuitBreaker();
+    dataService.resetBackendCheck();
+    const [health, availability] = await Promise.all([
+      checkBackendHealth(),
+      fetchDatasetAvailability("geos-cf-v2-aqc"),
+      fetchBackendLocations(),
+      dataService.getDataset(),
+    ]);
+    if (health) {
+      resetBackendCircuitBreaker();
+      setBackendStatus("live");
+      if (availability && availability.availableTimes.length > 0) {
+        setAvailableTimestamps(availability.availableTimes);
+      }
+    } else {
+      setBackendStatus("offline");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isMapWorkspace) return;
+    let cancelled = false;
+    const cancelIdle = scheduleWhenIdle(() => {
+      if (cancelled) return;
+      void (async () => {
+        const [health, availability] = await Promise.all([
+          checkBackendHealth(),
+          fetchDatasetAvailability("geos-cf-v2-aqc"),
+          fetchBackendLocations(),
+          dataService.getDataset(),
+        ]);
+        if (cancelled) return;
+        if (health) {
+          resetBackendCircuitBreaker();
+          setBackendStatus("live");
+          if (availability && availability.availableTimes.length > 0) {
+            setAvailableTimestamps(availability.availableTimes);
+          }
+        } else {
+          setBackendStatus("offline");
+        }
+      })();
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      cancelIdle();
+    };
+  }, [isMapWorkspace]);
+
   const [regionSeries, setRegionSeries] = useState<number[]>([64, 68, 72, 78, 74, 69, 66, 70]);
   const [savedWorks, setSavedWorks] = useState<GalleryWork[]>([]);
   const [bookmarkedIds, setBookmarkedIds] = useState<string[]>(["beijing", "monsoon"]);
   const [territories, setTerritories] = useState<TerritoryCatalogEntry[]>([]);
   const hydratedRef = useRef(false);
+  const activeStatsAbortRef = useRef<AbortController | null>(null);
+  const activeSeriesAbortRef = useRef<AbortController | null>(null);
 
   // Load lightweight 110m countries catalog and upgrade to 50m on browser idle ONLY on map workspace routes
   useEffect(() => {
@@ -283,7 +380,21 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
       const rawSaved = window.localStorage.getItem(STORAGE_KEYS.savedWorks);
       if (rawSaved) {
         const parsed = JSON.parse(rawSaved) as GalleryWork[];
-        if (Array.isArray(parsed)) setSavedWorks(parsed);
+        if (Array.isArray(parsed)) {
+          setSavedWorks(
+            parsed.filter(
+              (work) =>
+                !getRegionLayerRestriction(
+                  {
+                    id: work.regionId,
+                    name: work.region,
+                    territoryCode: work.territoryCode,
+                  },
+                  work.variable
+                )
+            )
+          );
+        }
       }
       const rawBookmarks = window.localStorage.getItem(STORAGE_KEYS.bookmarks);
       if (rawBookmarks) {
@@ -353,7 +464,7 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
     if (keyParam) {
       setMapping((prev) => ({ ...prev, musicalKey: keyParam }));
     }
-  }, []);
+  }, [setActiveLayer]);
 
   // Persist current region to sessionStorage without huge GeoJSON geometry blobs (rehydrated by territoryCode)
   useEffect(() => {
@@ -379,8 +490,13 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
   // Query live backend / GEOS-CF raster stats only on map workspace routes
   useEffect(() => {
     if (!isMapWorkspace) return;
-    let cancelled = false;
     if (!selection.boundaryGeometry && selection.polygon.length < 3) return;
+
+    if (activeStatsAbortRef.current) {
+      activeStatsAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    activeStatsAbortRef.current = controller;
 
     setRegionStats((prev) => ({
       ...prev,
@@ -394,13 +510,26 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
       timeIndex,
       selection.bounds,
       selection.polygon,
-      selection.boundaryGeometry
-    ).then((stats) => {
-      if (!cancelled) setRegionStats(stats);
-    });
+      selection.boundaryGeometry,
+      controller.signal
+    )
+      .then((stats) => {
+        if (!controller.signal.aborted) {
+          setRegionStats(stats);
+          if (stats.sourceKind === "backend-netcdf") {
+            setBackendStatus("live");
+          }
+        }
+      })
+      .catch((err) => {
+        if (err instanceof Error && err.name === "AbortError") return;
+      });
 
     return () => {
-      cancelled = true;
+      controller.abort();
+      if (activeStatsAbortRef.current === controller) {
+        activeStatsAbortRef.current = null;
+      }
     };
   }, [isMapWorkspace, selection.polygon, selection.bounds, selection.boundaryGeometry, activeLayer, timeIndex]);
 
@@ -410,27 +539,41 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
   // Deferred until idle on initial boot so 8 raster decodes never contend with 3D globe painting.
   useEffect(() => {
     if (!isMapWorkspace) return;
-    let cancelled = false;
     if (!selection.boundaryGeometry && selection.polygon.length < 3) return;
+
+    if (activeSeriesAbortRef.current) {
+      activeSeriesAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    activeSeriesAbortRef.current = controller;
 
     const timeoutMs = initialSeriesSettledRef.current ? 240 : 1800;
     const cancelIdle = scheduleWhenIdle(() => {
-      if (cancelled) return;
+      if (controller.signal.aborted) return;
       initialSeriesSettledRef.current = true;
       void samplePolygonSeries(
         activeLayer,
         selection.polygon,
         selection.boundaryGeometry,
-        selection.bounds
-      ).then((series) => {
-        if (!cancelled && series.length > 0) {
-          setRegionSeries(series);
-        }
-      });
+        selection.bounds,
+        undefined,
+        controller.signal
+      )
+        .then((series) => {
+          if (!controller.signal.aborted && series.length > 0) {
+            setRegionSeries(series);
+          }
+        })
+        .catch((err) => {
+          if (err instanceof Error && err.name === "AbortError") return;
+        });
     }, timeoutMs);
 
     return () => {
-      cancelled = true;
+      controller.abort();
+      if (activeSeriesAbortRef.current === controller) {
+        activeSeriesAbortRef.current = null;
+      }
       cancelIdle();
     };
   }, [isMapWorkspace, selection.polygon, selection.boundaryGeometry, selection.bounds, activeLayer]);
@@ -667,7 +810,7 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
         setRegionSeries(work.seriesPreview);
       }
     },
-    [pushSelection]
+    [pushSelection, setActiveLayer]
   );
 
   const saveWorkToGallery = useCallback(
@@ -786,7 +929,7 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
           typeof m[3] === "number" ? Math.max(0, Math.min(1, m[3] / 100)) : prev.spatialSpread,
       }));
     },
-    [pushSelection]
+    [pushSelection, setActiveLayer]
   );
 
   const value = useMemo<BreatheContextValue>(
@@ -804,11 +947,15 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
       mapping,
       regionStats,
       regionSeries,
+      backendStatus,
+      availableTimestamps,
+      refreshBackendConnection,
       savedWorks,
       bookmarkedIds,
       canUndoPolygon: historyIndex > 0,
       canRedoPolygon: historyIndex < selectionHistory.length - 1,
       setActiveLayer,
+      getLayerRestriction,
       setBasemapMode,
       setLayerVisible,
       setLayerOpacity,
@@ -847,10 +994,15 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
       mapping,
       regionStats,
       regionSeries,
+      backendStatus,
+      availableTimestamps,
+      refreshBackendConnection,
       savedWorks,
       bookmarkedIds,
       historyIndex,
       selectionHistory.length,
+      setActiveLayer,
+      getLayerRestriction,
       setCamera,
       flyTo,
       updateMapping,

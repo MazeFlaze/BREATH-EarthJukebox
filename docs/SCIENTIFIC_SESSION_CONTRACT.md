@@ -1,6 +1,6 @@
 # Scientific sessions: backend planning and browser rendering
 
-Status: additive v1 integration on top of main `b14671f`. Existing region/spatial/temporal APIs, map editor and gallery project format are unchanged. The local `/demo` remains ignored and is an R&D reference, not a dependency of the integrated frontend.
+Status: additive v1 integration, synchronized with main `36b19c5`. Existing region/spatial/temporal APIs, map editor and gallery project format are unchanged. The local `/demo` remains ignored and is an R&D reference, not a dependency of the integrated frontend.
 
 ## Ownership
 
@@ -72,7 +72,7 @@ Status codes: 422 invalid request; 404 no selected verified data/native file/slo
 
 ## Deployment and verification
 
-`GEOS_CF_CATALOG_ROOT` points to the existing exporter output containing index.json and SHA-named directories with detail.json/native fields. Development defaults to `frontend/public/data/geos-cf-catalog`; production must mount/copy this output into the backend container and set the variable. Merely deploying Python code does not provision NASA data. Export/download remain manual. Use existing frontend `NEXT_PUBLIC_BACKEND_URL` or `NEXT_PUBLIC_API_URL`; default local backend is http://localhost:8000.
+`GEOS_CF_CATALOG_ROOT` points to the existing exporter output containing index.json and SHA-named directories with detail.json/native fields. Development defaults to `frontend/public/data/geos-cf-catalog`; production must mount/copy this output into the backend container and set the variable. Merely deploying Python code does not provision NASA data. Export/download remain manual. Scientific requests reuse `resolveBackendRequestUrl`: explicit `NEXT_PUBLIC_BACKEND_URL`/`NEXT_PUBLIC_API_URL` when configured, otherwise the browser's same-origin `/api/v1` proxy backed by runtime `BACKEND_API_URL`. Server-side local fallback is http://localhost:8000.
 
 `breathe-recipe-v1` download includes the full scientific plan, source references, current slot/cell, mixer, mute/solo and explanation. It is local JSON export, not the gallery's older project schema and not a server share link. WAV/video export, durable recipe persistence, polygon-native band aggregation and animated concentration interpolation are outside this integration.
 

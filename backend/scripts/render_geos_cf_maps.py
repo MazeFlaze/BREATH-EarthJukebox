@@ -97,6 +97,8 @@ def render_flat_map_png(
     nc_path: Path,
     variable: str,
     output_path: Path,
+    width: int = OUTPUT_WIDTH_PX,
+    height: int = OUTPUT_HEIGHT_PX,
 ) -> Dict[str, Any]:
     """
     Renders a single clean 1920x1080 equirectangular flat-map PNG for a GEOS-CF variable.
@@ -142,7 +144,7 @@ def render_flat_map_png(
     cmap_obj = matplotlib.colormaps.get_cmap(spec["cmap"]).copy()
     cmap_obj.set_bad(color="#070b14")
 
-    fig = plt.figure(figsize=(OUTPUT_WIDTH_PX / RENDER_DPI, OUTPUT_HEIGHT_PX / RENDER_DPI), dpi=RENDER_DPI)
+    fig = plt.figure(figsize=(width / RENDER_DPI, height / RENDER_DPI), dpi=RENDER_DPI)
     ax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
     ax.set_facecolor("#070b14")
 
@@ -182,8 +184,8 @@ def render_flat_map_png(
         "vmin": spec["vmin"],
         "vmax": spec["vmax"],
         "displayUnit": spec["display_unit"],
-        "width": OUTPUT_WIDTH_PX,
-        "height": OUTPUT_HEIGHT_PX,
+        "width": width,
+        "height": height,
         "bounds": {"latMin": -90.0, "latMax": 90.0, "lonMin": -180.0, "lonMax": 180.0},
         "sourceFile": nc_path.name,
     }
@@ -316,55 +318,133 @@ def update_offline_json_catalogs(
             svs_processed_path.write_text(json.dumps(svs_data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def _extract_granule_date(path: Path) -> Optional[str]:
+    """Extracts YYYYMMDD stamp from GEOS.cf.ana.*.YYYYMMDD_HH30z.*.nc4 filename."""
+    for part in path.name.split("."):
+        if len(part) >= 13 and part[8] == "_" and part[:8].isdigit():
+            return part[:8]
+    return None
+
+
+def _extract_granule_hour(path: Path) -> Optional[int]:
+    """Extracts UTC hour (0-23) from GEOS.cf.ana.*.YYYYMMDD_HH30z.*.nc4 filename."""
+    for part in path.name.split("."):
+        if len(part) >= 13 and part[8] == "_" and part[9:11].isdigit():
+            return int(part[9:11])
+    return None
+
+
+def select_granules_for_date(
+    raw_dir: Path,
+    target_date: str = "latest",
+    step_hours: int = 3,
+    limit: Optional[int] = None,
+) -> Tuple[List[Path], Optional[str]]:
+    """
+    Selects local GEOS-CF granules for 'latest', 'all', or a specific YYYY-MM-DD date.
+    Prefers modulo-hour matching (idempotent whether 24h or 3h files exist on disk).
+    """
+    all_granules = sorted(raw_dir.glob("GEOS.cf.ana.*.nc4"))
+    if not all_granules:
+        return [], None
+
+    normalized = (target_date or "latest").strip().lower()
+    resolved_date: Optional[str] = None
+
+    if normalized == "all":
+        filtered = all_granules
+        dates = sorted({d for p in filtered if (d := _extract_granule_date(p)) is not None})
+        resolved_date = f"{dates[-1][:4]}-{dates[-1][4:6]}-{dates[-1][6:8]}" if dates else None
+    elif normalized == "latest":
+        dates = sorted({d for p in all_granules if (d := _extract_granule_date(p)) is not None})
+        if dates:
+            latest_stamp = dates[-1]
+            filtered = [p for p in all_granules if _extract_granule_date(p) == latest_stamp]
+            resolved_date = f"{latest_stamp[:4]}-{latest_stamp[4:6]}-{latest_stamp[6:8]}"
+        else:
+            filtered = all_granules
+    else:
+        compact = normalized.replace("-", "")
+        filtered = [p for p in all_granules if _extract_granule_date(p) == compact]
+        resolved_date = f"{compact[:4]}-{compact[4:6]}-{compact[6:8]}" if len(compact) == 8 else normalized
+
+    if step_hours > 1 and filtered:
+        aligned = [
+            p for p in filtered
+            if (hr := _extract_granule_hour(p)) is not None and (hr % step_hours) == 0
+        ]
+        filtered = aligned if aligned else filtered[::step_hours]
+
+    if limit is not None and limit > 0:
+        filtered = filtered[:limit]
+
+    return filtered, resolved_date
+
+
 def run_render_pipeline(
     raw_dir: Path,
     output_dir: Path,
     variables: List[str],
     step_hours: int = 3,
     limit: Optional[int] = None,
+    target_date: str = "latest",
+    clean_stale: bool = False,
+    catalog_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Selects local granules at fixed cadence, renders equirectangular PNGs, and updates manifests."""
-    granules = sorted(p for p in raw_dir.glob("GEOS.cf.ana.*.nc4") if "20261112_" in p.name)
-    if not granules:
-        granules = sorted(raw_dir.glob("GEOS.cf.ana.*.nc4"))
-    if step_hours > 1:
-        granules = granules[::step_hours]
-    if limit is not None and limit > 0:
-        granules = granules[:limit]
+    granules, resolved_date = select_granules_for_date(
+        raw_dir=raw_dir,
+        target_date=target_date,
+        step_hours=step_hours,
+        limit=limit,
+    )
 
+    output_dir.mkdir(parents=True, exist_ok=True)
     rendered_entries: List[Dict[str, Any]] = []
+    rendered_names: set[str] = set()
     for nc_path in granules:
         stamp = next((part for part in nc_path.name.split(".") if "_" in part and part.endswith("z")), nc_path.stem)
         for var in variables:
             out_file = output_dir / f"geos_cf_{var}_{stamp}.png"
             entry = render_flat_map_png(nc_path, var, out_file)
             rendered_entries.append(entry)
+            rendered_names.add(out_file.name)
             logger.info(f"Rendered {out_file.name}")
+
+    stale_removed = 0
+    if clean_stale and rendered_entries:
+        for existing_png in output_dir.glob("geos_cf_*.png"):
+            if existing_png.name not in rendered_names:
+                existing_png.unlink()
+                stale_removed += 1
 
     manifest = {
         "generatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "targetDate": resolved_date,
         "projection": "EPSG:4326",
         "width": OUTPUT_WIDTH_PX,
         "height": OUTPUT_HEIGHT_PX,
         "bounds": {"latMin": -90.0, "latMax": 90.0, "lonMin": -180.0, "lonMax": 180.0},
         "maps": rendered_entries,
     }
-    output_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 
     observations = build_offline_observations(granules, rendered_entries)
+    base_root = catalog_root or project_root
     update_offline_json_catalogs(
         manifest=manifest,
         observations=observations,
-        frontend_obs_path=project_root / "frontend" / "src" / "data" / "observations.json",
-        backend_offline_path=backend_dir / "src" / "data" / "processed" / "geos_cf_offline_maps.json",
-        svs_processed_path=backend_dir / "src" / "data" / "processed" / "svs5533_geos_cf_processed.json",
+        frontend_obs_path=base_root / "frontend" / "src" / "data" / "observations.json",
+        backend_offline_path=base_root / "backend" / "src" / "data" / "processed" / "geos_cf_offline_maps.json",
+        svs_processed_path=base_root / "backend" / "src" / "data" / "processed" / "svs5533_geos_cf_processed.json",
     )
 
     return {
+        "target_date": resolved_date,
         "granules_processed": len(granules),
         "images_rendered": len(rendered_entries),
+        "stale_removed": stale_removed,
         "manifest_path": str(manifest_path),
         "offline_observations": len(observations),
     }
@@ -379,8 +459,10 @@ def main() -> None:
         default=project_root / "frontend" / "public" / "images" / "geos-cf",
     )
     parser.add_argument("--variables", nargs="+", default=["PM25_RH35", "NO2", "O3", "CO", "SO2"])
-    parser.add_argument("--step-hours", type=int, default=6, help="Stride in hours across granules (1 = all hours).")
+    parser.add_argument("--step-hours", type=int, default=3, help="Stride in hours across granules (1 = all hours).")
     parser.add_argument("--limit", type=int, default=None, help="Optional maximum number of granules to render.")
+    parser.add_argument("--date", type=str, default="latest", help="Target UTC date YYYY-MM-DD, 'latest', or 'all'.")
+    parser.add_argument("--clean-stale", action="store_true", help="Remove older geos_cf_*.png files when regenerating.")
     args = parser.parse_args()
 
     result = run_render_pipeline(
@@ -389,8 +471,10 @@ def main() -> None:
         variables=args.variables,
         step_hours=args.step_hours,
         limit=args.limit,
+        target_date=args.date,
+        clean_stale=args.clean_stale,
     )
-    print(f"[SUCCESS] Rendered {result['images_rendered']} offline map PNGs across {result['granules_processed']} granules.")
+    print(f"[SUCCESS] Rendered {result['images_rendered']} offline map PNGs across {result['granules_processed']} granules (date={result['target_date']}).")
 
 
 if __name__ == "__main__":

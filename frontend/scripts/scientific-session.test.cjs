@@ -3,6 +3,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), Module = require('node:module'), ts = require('typescript');
 const filename = path.resolve(__dirname, '../src/services/scientificSession.ts');
 const unit = new Module(filename);unit.filename = filename;unit.paths = module.paths;
+unit.require = name => {
+  if (name !== './backendApi') return require(name);
+  const target = path.resolve(__dirname, '../src/services/backendApi.ts');
+  const adapter = new Module(target); adapter.filename = target; adapter.paths = module.paths;
+  adapter._compile(ts.transpileModule(fs.readFileSync(target, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, target);
+  return adapter.exports;
+};
 unit._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,filename);
 const {decodeArray,scientificApiBase,prepareScientificSession}=unit.exports;
 test('Scientific binary transport retains valid zero and missing; rejects truncated data',()=>{
@@ -25,4 +32,15 @@ test('Audio renderer consumes the server arrangement rather than rebuilding it',
   const fixture={isMock:true,steps:1,lanes:1,mean:Float32Array.of(0),positions:Float32Array.of(.5),audioMax:100,
     contextPlan:{version:'synthetic-fixture',windowSteps:1,windows:[],gradient:Float32Array.of(0),curvature:Float32Array.of(0)}};
   const synth=new ContextSynth(fixture,48000,180);assert.equal(synth.plan,fixture.contextPlan);
+});
+test('Scientific sessions follow the same-origin runtime proxy when public URLs are unset',()=>{
+  const before=process.env.NEXT_PUBLIC_BACKEND_URL,other=process.env.NEXT_PUBLIC_API_URL,oldWindow=global.window;
+  try{
+    delete process.env.NEXT_PUBLIC_BACKEND_URL;delete process.env.NEXT_PUBLIC_API_URL;global.window={};
+    assert.equal(scientificApiBase(),'/api/v1/scientific');
+  }finally{
+    if(before===undefined)delete process.env.NEXT_PUBLIC_BACKEND_URL;else process.env.NEXT_PUBLIC_BACKEND_URL=before;
+    if(other===undefined)delete process.env.NEXT_PUBLIC_API_URL;else process.env.NEXT_PUBLIC_API_URL=other;
+    if(oldWindow===undefined)delete global.window;else global.window=oldWindow;
+  }
 });

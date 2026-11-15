@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: "standalone",
   reactStrictMode: true,
+  distDir: process.env.BREATHE_DIST_DIR || ".next",
   transpilePackages: ["motion"],
   images: {
     remotePatterns: [
