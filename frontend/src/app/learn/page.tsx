@@ -441,8 +441,8 @@ export default function LearnPage() {
             </div>
 
             <div className="b-compare-selectors">
-              <div style={{ flex: 1, minWidth: 160 }}>
-                <span style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--muted)", marginBottom: 4 }}>Region A</span>
+              <div className="b-compare-selector-field">
+                <span className="b-compare-selector-label">Region A</span>
                 <CustomSelect
                   value={cityAId}
                   options={COMPARISON_PROFILES.map((p) => ({
@@ -456,8 +456,8 @@ export default function LearnPage() {
                 />
               </div>
 
-              <div style={{ flex: 1, minWidth: 160 }}>
-                <span style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--muted)", marginBottom: 4 }}>Region B</span>
+              <div className="b-compare-selector-field">
+                <span className="b-compare-selector-label">Region B</span>
                 <CustomSelect
                   value={cityBId}
                   options={COMPARISON_PROFILES.map((p) => ({
@@ -509,23 +509,25 @@ export default function LearnPage() {
             </div>
 
             <div className="b-compare-player">
-              <div>
+              <div className="b-compare-player-head">
                 <strong>Hear the contrast</strong>
                 <div className="b-segmented" role="group" aria-label="Switch A/B city profile">
-                  <button
-                    type="button"
-                    className={activeAB === "a" ? "is-active" : undefined}
-                    onClick={() => setActiveAB("a")}
-                  >
-                    {cityA.title.split(",")[0]}
-                  </button>
-                  <button
-                    type="button"
-                    className={activeAB === "b" ? "is-active" : undefined}
-                    onClick={() => setActiveAB("b")}
-                  >
-                    {cityB.title.split(",")[0]}
-                  </button>
+                  {(
+                    [
+                      { key: "a", label: cityA.title.split(",")[0] },
+                      { key: "b", label: cityB.title.split(",")[0] },
+                    ] as const
+                  ).map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      className={activeAB === item.key ? "is-active" : undefined}
+                      onClick={() => setActiveAB(item.key)}
+                      title={item.label}
+                    >
+                      <span>{item.label}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
 

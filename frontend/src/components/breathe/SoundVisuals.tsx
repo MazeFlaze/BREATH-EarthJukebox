@@ -481,7 +481,7 @@ export function AudioTransport({
       </div>
 
       <div className="b-transport-content">
-        <strong>{title}</strong>
+        <strong title={title}>{title}</strong>
         <Waveform compact spec={spec} />
         {label && <small className="b-muted">{label}</small>}
       </div>
