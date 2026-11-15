@@ -98,6 +98,35 @@ export function getLayerDefinition(key: LayerKey): LayerDefinition {
   return layers.find((layer) => layer.key === key) ?? layers[0];
 }
 
+export interface LayerRegionRestriction {
+  layer: LayerKey;
+  fallbackLayer: LayerKey;
+  regionLabel: string;
+  shortReason: string;
+  notice: string;
+}
+
+export function getRegionLayerRestriction(
+  selection: { id?: string; name?: string; territoryCode?: string } | null | undefined,
+  layerKey: LayerKey
+): LayerRegionRestriction | null {
+  if (!selection || layerKey !== "PM25_RH35") return null;
+  const normalizedName = (selection.name ?? "").trim().toLowerCase();
+  const isGreenland =
+    selection.territoryCode === "304" ||
+    selection.id === "territory-304" ||
+    normalizedName === "greenland";
+  if (!isGreenland) return null;
+  return {
+    layer: "PM25_RH35",
+    fallbackLayer: "O3",
+    regionLabel: "Greenland",
+    shortReason: "PM2.5 is not displayed for Greenland Arctic ice-sheet regimes",
+    notice:
+      "Surface PM2.5 plume display is hidden for Greenland because Arctic ice-sheet regimes are unsuitable for plume sonification. Switched to Ozone (O₃).",
+  };
+}
+
 export function frameFor(layer: LayerKey, timeIndex: number) {
   const safeIndex = Math.max(0, Math.min(timeSlots.length - 1, timeIndex));
   return mapFrames.find(

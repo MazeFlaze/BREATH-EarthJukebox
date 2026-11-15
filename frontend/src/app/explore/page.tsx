@@ -71,6 +71,7 @@ export default function ExplorePage() {
     canUndoPolygon,
     canRedoPolygon,
     setActiveLayer,
+    getLayerRestriction,
     setBasemapMode,
     setLayerVisible,
     setLayerOpacity,
@@ -98,6 +99,7 @@ export default function ExplorePage() {
   const [searchError, setSearchError] = useState<string | null>(null);
 
   const layerDef = getLayerDefinition(activeLayer);
+  const pm25Restriction = getLayerRestriction("PM25_RH35");
   const compositionSpec = useMemo(() => buildCompositionSpec(), [buildCompositionSpec]);
 
   useEffect(() => {
@@ -359,7 +361,14 @@ export default function ExplorePage() {
               onToggleVisible={() => setLayerVisible(!layerVisible)}
               layerOpacity={layerOpacity}
               onOpacityChange={setLayerOpacity}
+              getLayerDisabledReason={(key) => getLayerRestriction(key)?.shortReason ?? null}
             />
+            {pm25Restriction && (
+              <div className="b-layer-restriction-note is-sidebar" role="status" aria-live="polite">
+                <Info size={13} aria-hidden="true" />
+                <span>{pm25Restriction.notice}</span>
+              </div>
+            )}
           </div>
 
           <div className="b-sidebar-section">

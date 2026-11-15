@@ -9,6 +9,7 @@ import {
   Eye,
   EyeOff,
   FolderOpen,
+  Info,
   Minus,
   Plus,
   Share2,
@@ -78,6 +79,7 @@ export default function StudioPage() {
     mapping,
     regionStats,
     setActiveLayer,
+    getLayerRestriction,
     setBasemapMode,
     setLayerVisible,
     setLayerOpacity,
@@ -99,6 +101,7 @@ export default function StudioPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const layerDef = getLayerDefinition(activeLayer);
+  const pm25Restriction = getLayerRestriction("PM25_RH35");
   const compositionSpec = useMemo(() => buildCompositionSpec(), [buildCompositionSpec]);
   const fittedZoom = useMemo(() => zoomForBounds(selection.bounds), [selection.bounds]);
 
@@ -259,6 +262,8 @@ export default function StudioPage() {
               <div className="b-studio-var-strip" role="radiogroup" aria-label="Atmospheric variable">
                 {layers.map((item) => {
                   const active = item.key === activeLayer;
+                  const restriction = getLayerRestriction(item.key);
+                  const isDisabled = !item.available || Boolean(restriction);
                   return (
                     <button
                       key={item.key}
@@ -266,10 +271,16 @@ export default function StudioPage() {
                       role="radio"
                       aria-checked={active}
                       className={active ? "is-active" : undefined}
-                      disabled={!item.available}
-                      title={!item.available ? item.methodologyNote : item.label}
+                      disabled={isDisabled}
+                      title={
+                        restriction
+                          ? restriction.shortReason
+                          : !item.available
+                            ? item.methodologyNote
+                            : item.label
+                      }
                       onClick={() => {
-                        if (item.available) setActiveLayer(item.key);
+                        if (!isDisabled) setActiveLayer(item.key);
                       }}
                     >
                       {item.short}
@@ -301,6 +312,13 @@ export default function StudioPage() {
                 <span className="b-tabular">{layerVisible ? `${Math.round(layerOpacity * 100)}%` : "Off"}</span>
               </div>
             </div>
+
+            {pm25Restriction && (
+              <div className="b-layer-restriction-note" role="status" aria-live="polite">
+                <Info size={13} aria-hidden="true" />
+                <span>{pm25Restriction.notice}</span>
+              </div>
+            )}
 
             <div className="b-studio-map">
               <GeoMap
@@ -350,6 +368,7 @@ export default function StudioPage() {
             <AudioTransport
               title={`${selection.name} · ${layerDef.short}`}
               spec={compositionSpec}
+              hideContext
               onStepSlot={handleStepSlot}
             />
 

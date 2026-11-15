@@ -1462,6 +1462,7 @@
 
 .b-studio-var-strip button:disabled {
   opacity: 0.42;
+  cursor: not-allowed;
 }
 
 .b-studio-opacity-inline {
@@ -1891,4 +1892,271 @@
   background: var(--green-soft);
   border-color: var(--sage);
   color: var(--green-dark);
+}
+
+/* Regional atmospheric layer restriction banner (e.g. Greenland Arctic PM2.5) */
+.b-layer-restriction-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 14px;
+  background: #f2f5ee;
+  border-bottom: 1px solid var(--line);
+  color: var(--green-dark);
+  font-size: 11px;
+  line-height: 1.42;
+}
+
+.b-layer-restriction-note svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--green);
+}
+
+.b-layer-restriction-note.is-sidebar {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid #cadbd0;
+  border-radius: 9px;
+}
+
+.b-layer-restriction-note.is-compact {
+  margin: 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+/* Gallery explicit search + atmospheric variable filter menu & chips */
+.b-gallery-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.b-gallery-controls .b-gallery-search {
+  width: clamp(190px, 23vw, 245px);
+  flex: 1 1 auto;
+}
+
+.b-gallery-search-clear {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.b-gallery-search-clear:hover {
+  background: #eef2ea;
+  color: var(--ink);
+}
+
+.b-gallery-filter-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.b-gallery-filter-btn {
+  height: 37px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.b-gallery-filter-btn:hover {
+  border-color: var(--sage);
+  background: #f8faf6;
+}
+
+.b-gallery-filter-btn.is-active {
+  background: var(--green-soft);
+  border-color: var(--sage);
+  color: var(--green-dark);
+}
+
+.b-gallery-filter-btn strong {
+  font-weight: 700;
+}
+
+.b-gallery-filter-btn svg:last-child {
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+
+.b-gallery-filter-btn svg:last-child.is-open {
+  transform: rotate(180deg);
+}
+
+.b-gallery-filter-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 244px;
+  padding: 6px;
+  border: 1px solid #c9d8cd;
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 0 14px 30px rgba(17, 41, 38, 0.13);
+  z-index: 40;
+  display: grid;
+  gap: 2px;
+}
+
+.b-gallery-filter-heading {
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 5px 8px 4px;
+}
+
+.b-gallery-filter-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+
+.b-gallery-filter-option:hover {
+  background: #f2f5ee;
+}
+
+.b-gallery-filter-option.is-selected {
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+.b-gallery-filter-option-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  margin-right: auto;
+}
+
+.b-gallery-filter-option-main strong {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.b-gallery-filter-option-main small {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.b-gallery-filter-count {
+  font-size: 10px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 6px;
+  border-radius: 99px;
+  background: #edf2ea;
+  color: var(--muted);
+}
+
+.b-gallery-filter-option.is-selected .b-gallery-filter-count {
+  background: #d7e5da;
+  color: var(--green-dark);
+}
+
+.b-gallery-active-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: -9px 0 15px;
+  padding: 8px 11px;
+  border-radius: 10px;
+  background: #f6f8f3;
+  border: 1px solid var(--line);
+}
+
+.b-gallery-active-summary {
+  font-size: 11px;
+  color: var(--muted);
+  margin-right: 4px;
+}
+
+.b-gallery-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid #c9d8cd;
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--green-dark);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.b-gallery-filter-chip:hover {
+  background: var(--green-soft);
+}
+
+.b-gallery-clear-all {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--green-dark);
+  font-size: 11px;
+  font-weight: 650;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.b-gallery-clear-all:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 800px) {
+  .b-gallery-controls {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+
+  .b-gallery-controls .b-gallery-search {
+    width: auto;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .b-gallery-controls {
+    width: 100%;
+  }
+
+  .b-gallery-filter-menu {
+    min-width: 220px;
+  }
+}
+
+.b-transport-minimal .b-transport-time {
+  margin-left: auto;
 }
