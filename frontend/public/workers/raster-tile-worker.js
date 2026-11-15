@@ -163,6 +163,72 @@ function decodeColormapNormalized(r, g, b, a, cmap) {
 }
 
 /**
+ * Smooths display scalar norms using a separable 2D Gaussian/binomial filter [1, 4, 6, 4, 1] / 16.
+ * Dissolves 0.25-deg nearest-neighbor pcolormesh grid blocks into silky continuous gradients,
+ * while strictly preserving ocean masking boundaries (-1).
+ */
+function smoothDisplayNorms(norms, width, height) {
+  const temp = new Float32Array(width * height);
+  const out = new Float32Array(width * height);
+  const weights = [1, 4, 6, 4, 1];
+
+  // Horizontal pass: kernel [1, 4, 6, 4, 1] / 16
+  for (let y = 0; y < height; y += 1) {
+    const rowOffset = y * width;
+    for (let x = 0; x < width; x += 1) {
+      const centerIdx = rowOffset + x;
+      const centerVal = norms[centerIdx];
+      if (centerVal < 0) {
+        temp[centerIdx] = -1;
+        continue;
+      }
+      let sum = 0;
+      let wSum = 0;
+      for (let k = -2; k <= 2; k += 1) {
+        let nx = x + k;
+        if (nx < 0) nx += width;
+        else if (nx >= width) nx -= width;
+        const v = norms[rowOffset + nx];
+        if (v >= 0) {
+          const w = weights[k + 2];
+          sum += v * w;
+          wSum += w;
+        }
+      }
+      temp[centerIdx] = wSum > 0 ? sum / wSum : centerVal;
+    }
+  }
+
+  // Vertical pass: kernel [1, 4, 6, 4, 1] / 16
+  for (let x = 0; x < width; x += 1) {
+    for (let y = 0; y < height; y += 1) {
+      const centerIdx = y * width + x;
+      const centerVal = temp[centerIdx];
+      if (centerVal < 0) {
+        out[centerIdx] = -1;
+        continue;
+      }
+      let sum = 0;
+      let wSum = 0;
+      for (let k = -2; k <= 2; k += 1) {
+        const ny = y + k;
+        if (ny >= 0 && ny < height) {
+          const v = temp[ny * width + x];
+          if (v >= 0) {
+            const w = weights[k + 2];
+            sum += v * w;
+            wSum += w;
+          }
+        }
+      }
+      out[centerIdx] = wSum > 0 ? sum / wSum : centerVal;
+    }
+  }
+
+  return out;
+}
+
+/**
  * Decodes each (imageUrl, cmap) display frame once into a compact normalized Float32Array (-1 masked)
  * so Mercator overlay tiles only perform O(1) bilinear scalar interpolation per pixel.
  */
@@ -193,7 +259,8 @@ function getDisplayScalarGrid(imageUrl, cmap) {
       const t = decodeColormapNormalized(data[idx], data[idx + 1], data[idx + 2], data[idx + 3], cmap);
       norms[i] = t === null ? -1 : t;
     }
-    return { width: raster.width, height: raster.height, norms };
+    const smoothedNorms = smoothDisplayNorms(norms, raster.width, raster.height);
+    return { width: raster.width, height: raster.height, norms: smoothedNorms };
   })().catch((err) => {
     scalarGridCache.delete(key);
     throw err;
