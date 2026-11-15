@@ -27,6 +27,11 @@
   - Next.js 14 (App Router), React 18, TypeScript, Tailwind CSS.
   - Browser native Web Audio API for client-side sonification.
   - Resilient `dataService.ts` fetching from `http://localhost:8000/api/v1` with fallback to bundled local JSON.
+- **MapLibre, Raster & Sonification Performance Invariants**:
+  - **Spatial Projection Integrity**: GEOS-CF raster assets are `EPSG:4326` equirectangular (`-90..90`, `-180..180`). Never feed un-reprojected equirectangular frames into a Mercator/Globe `ImageSource`; visual overlays must stay pixel-aligned with `(lat, lon)` sampling in `samplePolygonStats` and `MapScanOverlay`.
+  - **No Main-Thread Tile PNG Re-Encoding**: In `maplibre-gl` v6 `addProtocol`, return `ImageBitmap` (ideally from a Worker / `OffscreenCanvas` or cached decoded scalar/RGBA buffer) instead of `canvas.toBlob("image/png")`.
+  - **Layer Visibility & Effect Isolation**: Zero-opacity raster layers (`earth-base-layer` outside `satellite`, or hidden overlays) must set `layout.visibility: "none"` in both initial style and runtime theme updates. Keep `setTiles`/source updates in a separate `useEffect` from `raster-opacity`/`visibility`. On the first switch to `satellite`, cover only the map viewport with `GlobeLoadingOverlay` using non-blocking `async/await` preload so audio and controls remain responsive.
+  - **60 FPS Clock Isolation**: Never subscribe to `useAudioClock()` at a page root containing `GeoMap` or large `<select>` trees; isolate high-frequency telemetry or render visualizers via canvas `rAF`.
 
 ---
 
