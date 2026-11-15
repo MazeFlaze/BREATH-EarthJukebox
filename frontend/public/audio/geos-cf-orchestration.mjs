@@ -1,5 +1,6 @@
 // Local research mapping: musical choices are not physical calibration or source attribution.
 export const ORCHESTRATION_VERSION = 'context-spatial-pentatonic-v1';
+export const TEMPORAL_ORCHESTRATION_VERSION = 'context-temporal-hourly-pentatonic-v1';
 export const STEM_NAMES = ['Field / mean', 'Highlights / P90 excess', 'Spread / IQR', 'Edges / spatial derivatives'];
 const clip = x => Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : 0;
 const score = (x, max) => clip(x / max);
@@ -20,27 +21,33 @@ export function createContextPlan(frames, duration) {
   const { steps, lanes, audioMax, mean } = frames;
   const gradient = new Float32Array(mean.length), curvature = new Float32Array(mean.length);
   const degrees = frames.axis === 'horizontal' ? 360 : 180;
-  const position = step => frames.stepPositions?.[step] * degrees;
+  const temporal = frames.featureDomain === 'temporal';
+  const boundaries = new Set(frames.segmentStarts ?? []);
+  const position = step => temporal ? frames.coordinates?.[step] : frames.stepPositions?.[step] * degrees;
   const distance = (a, b) => {
     const d = Math.abs(position(a) - position(b));
-    return Number.isFinite(d) && d > 0 ? d : degrees / Math.max(1, steps);
+    return Number.isFinite(d) && d > 0 ? d : temporal ? 1 : degrees / Math.max(1, steps);
   };
-  for (let step = 0; step < steps; step++) for (let lane = 0; lane < lanes; lane++) {
+  const preparedSpatial = !temporal && frames.spatialGradient?.length === mean.length && frames.spatialCurvature?.length === mean.length;
+  if (preparedSpatial) { gradient.set(frames.spatialGradient); curvature.set(frames.spatialCurvature); }
+  for (let step = 0; !preparedSpatial && step < steps; step++) for (let lane = 0; lane < lanes; lane++) {
     const i = step * lanes + lane, v = mean[i];
     if (!Number.isFinite(v)) continue;
-    const before = step > 0 && Number.isFinite(mean[i - lanes]);
-    const after = step + 1 < steps && Number.isFinite(mean[i + lanes]);
+    const before = step > 0 && !boundaries.has(step) && Number.isFinite(mean[i - lanes]);
+    const after = step + 1 < steps && !boundaries.has(step + 1) && Number.isFinite(mean[i + lanes]);
     const dl = before ? distance(step, step - 1) : 0, dr = after ? distance(step, step + 1) : 0;
     const left = before ? (v - mean[i - lanes]) / dl / audioMax : 0;
     const right = after ? (mean[i + lanes] - v) / dr / audioMax : 0;
-    // Fixed artistic reference: 2% of audio_max per degree, 1% per degree squared.
+    // Fixed artistic reference: 2% / degree (or UTC hour), 1% / degree² (or hour²).
     gradient[i] = clip(Math.abs(before && after ? (left * dl + right * dr) / (dl + dr) : before ? left : right) / .02);
     curvature[i] = before && after ? clip(Math.abs(2 * (right - left) / (dl + dr)) / .01) : 0;
   }
   const windowSteps = Math.max(1, Math.floor(.8 * steps / duration));
-  const windows = [];
-  for (let startStep = 0; startStep < steps; startStep += windowSteps) {
-    const endStep = Math.min(steps, startStep + windowSteps), voices = [];
+  const windows = [], stepWindows = new Int32Array(steps);
+  for (let startStep = 0; startStep < steps;) {
+    let endStep = Math.min(steps, startStep + windowSteps);
+    for (const boundary of boundaries) if (boundary > startStep && boundary < endStep) endStep = boundary;
+    const voices = [];
     for (let lane = 0; lane < lanes; lane++) {
       let count = 0, sum = 0, peak = 0, excess = 0, spread = 0, edge = 0;
       for (let step = startStep; step < endStep; step++) {
@@ -55,9 +62,10 @@ export function createContextPlan(frames, duration) {
       voices.push({ lane, valid: count > 0, mean: count ? sum / count : null, p90: peak,
         excess, spread, edge, note: musicalNote(Math.sqrt(score(peak, audioMax))) });
     }
-    windows.push({ startStep, endStep, voices });
+    stepWindows.fill(windows.length, startStep, endStep);
+    windows.push({ startStep, endStep, voices }); startStep = endStep;
   }
-  return { version: ORCHESTRATION_VERSION, windowSteps, windows, gradient, curvature };
+  return { version: temporal ? TEMPORAL_ORCHESTRATION_VERSION : ORCHESTRATION_VERSION, windowSteps, windows, gradient, curvature, stepWindows };
 }
 
 /** Same selection is used by the UI inspector and the audio thread. Ties keep lane order.
@@ -100,7 +108,7 @@ class Tone {
 
 export class ContextSynth {
   constructor(frames, sr, duration) {
-    this.frames = frames; this.sr = sr; this.duration = duration; this.plan = createContextPlan(frames, duration);
+    this.frames = frames; this.sr = sr; this.duration = duration; this.plan = frames.contextPlan ?? createContextPlan(frames, duration);
     this.cursor = 0; this.end = duration * sr; this.stepSamples = duration * sr / frames.steps;
     this.fields = Array.from({ length: frames.lanes }, (_, lane) => new Tone(sr, musicalNote(frames.positions?.[lane] ?? lane / Math.max(1, frames.lanes - 1), 48, 1), [.72, .19, .06]));
     this.spreads = this.fields.map(tone => new Tone(sr, tone.midi - 12, [.7, .16, .08]));
@@ -131,7 +139,7 @@ export class ContextSynth {
     for (let n = 0; n < left.length && this.cursor < this.end; n++, this.cursor++) {
       const timeline = Math.min(f.steps - 1, Math.floor(this.cursor / this.stepSamples));
       const step = c.reverse ? f.steps - 1 - timeline : timeline;
-      const windowIndex = Math.floor(step / this.plan.windowSteps), window = this.plan.windows[windowIndex];
+      const windowIndex = this.plan.stepWindows[step], window = this.plan.windows[windowIndex];
       if (this.currentWindow !== windowIndex) {
         this.currentWindow = windowIndex; this.events = selectContextEvents(window, c.from, c.to);
         this.highlights.forEach((tone, i) => { if (this.events.highlights[i]) tone.tune(this.events.highlights[i].note); });
@@ -145,7 +153,7 @@ export class ContextSynth {
           spreads[lane] = selected && Number.isFinite(f.mean[i]) ? Math.sqrt(clip(f.spread[i])) : 0;
           if (selected) missing += 1 - f.coverage[i];
           // Lane position provides separation; cursor position adds a smaller scan movement.
-          const loc = f.positions?.[lane] ?? lane / Math.max(1, f.lanes - 1);
+          const loc = f.lanePanPositions?.[lane] ?? f.positions?.[lane] ?? lane / Math.max(1, f.lanes - 1);
           const scan = f.stepPositions?.[step] ?? step / Math.max(1, f.steps - 1);
           const angle = (.15 + .7 * (.7 * loc + .3 * scan)) * Math.PI / 2;
           pan[lane] = [Math.cos(angle), Math.sin(angle)];

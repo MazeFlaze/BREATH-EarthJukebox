@@ -1,0 +1,29 @@
+.workspace { padding: 28px 0 60px; color: var(--b-text, #183f36); }
+.heading,.actions { display:flex; flex-wrap:wrap; align-items:center; gap:12px; justify-content:space-between; margin-bottom:18px; }
+.heading h1 { font-size:28px; margin:0 0 8px; }
+.controls { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:14px; }
+.controls label,.mixer label { display:flex; flex-direction:column; gap:7px; font-size:12px; min-width:0; }
+.workspace select,.workspace input[type=number] { padding:9px; border:1px solid #76968b; border-radius:6px; background:#fff; color:#153d32; width:100%; min-width:0; }
+.workspace input[type=range] { width:100%; }
+.card { padding:20px; border:1px solid #adc2b8; border-radius:12px; margin:16px 0; background:rgba(255,255,255,.8); min-width:0; }
+.card h2 { margin:0 0 12px; font-size:18px; }
+.card p { font-size:13px; line-height:1.65; }
+.grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(260px,320px); gap:20px; }
+.maps { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr)); gap:16px; }
+.raster { position:relative; width:100%; max-height:550px; background:#222d52; }
+.raster canvas,.raster svg { width:100%; height:100%; display:block; }
+.raster svg { position:absolute; inset:0; pointer-events:none; }
+.raster canvas { image-rendering:pixelated; }
+.timestamps { display:flex; gap:6px; overflow-x:auto; margin:12px 0; }
+.timestamps button { white-space:nowrap; flex-shrink:0; }
+.workspace button { cursor:pointer; }
+.workspace button:disabled { opacity:.5; cursor:wait; }
+.workspace button[aria-pressed=true] { outline:2px solid #568755; }
+.mixer { display:grid; gap:16px; }
+.mixer button { padding:6px 12px; margin:4px 4px 0 0; border:1px solid #76968b; border-radius:6px; font-size:12px; }
+.message { padding:12px; background:#e4eee5; border-radius:6px; margin:12px 0; font-size:13px; overflow-wrap:anywhere; }
+.error { background:#f7dfd8; color:#822d21; }
+.mono { font:11px/1.6 monospace; overflow-wrap:anywhere; }
+.region { margin:12px 0; }
+.picker { height:440px; position:relative; }
+@media(max-width:760px) { .grid { grid-template-columns:1fr; } .card { padding:14px; } .heading h1 { font-size:24px; } }

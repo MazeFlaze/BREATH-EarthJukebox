@@ -2,9 +2,9 @@ import type { CatalogEntry } from './geosCfCatalog';
 import type { Pollutant } from '@/types/notebookDemo';
 import type { DetailManifest, DetailOptions, DetailView } from '@/types/geosCfDetail';
 
-export async function loadDetail(entry: CatalogEntry, pollutant: Pollutant, signal: AbortSignal) {
+export async function loadDetail(entry: CatalogEntry, pollutant: Pollutant, signal: AbortSignal, resolveUrl: (url: string) => string = url => url) {
   if (entry.status !== 'ready' || !entry.detail_url?.startsWith('/data/')) throw Error('Snapshot chưa có native cache. Export lại catalog local rồi tải lại trang.');
-  const response = await fetch(entry.detail_url, { signal });
+  const response = await fetch(resolveUrl(entry.detail_url), { signal, cache: 'no-store' });
   if (!response.ok) throw Error(`Không đọc được detail manifest: HTTP ${response.status}`);
   const manifest = await response.json() as DetailManifest;
   const field = manifest.fields?.[pollutant];
@@ -13,7 +13,7 @@ export async function loadDetail(entry: CatalogEntry, pollutant: Pollutant, sign
     || manifest.lat_first !== 90 || manifest.lat_step !== -.25 || manifest.lon_first !== -180 || manifest.lon_step !== .25
     || manifest.order !== 'north-to-south,west-to-east' || manifest.missing !== 'NaN'
     || !field?.url.startsWith('/data/') || field.dtype !== 'float32-le' || !(field.audio_max > 0)) throw Error('Native cache và catalog không khớp');
-  const rawResponse = await fetch(field.url, { signal });
+  const rawResponse = await fetch(resolveUrl(field.url), { signal, cache: 'no-store' });
   if (!rawResponse.ok) throw Error(`Không đọc được native cache: HTTP ${rawResponse.status}`);
   const buffer = await rawResponse.arrayBuffer();
   if (buffer.byteLength !== manifest.rows * manifest.cols * 4) throw Error('Native cache thiếu mẫu');

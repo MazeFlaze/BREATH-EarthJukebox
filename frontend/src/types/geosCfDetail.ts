@@ -14,19 +14,22 @@ export interface DetailFrames {
   steps: number; lanes: number; mean: Float32Array; p90: Float32Array; spread: Float32Array;
   coverage: Float32Array; contrast: Float32Array; positions: Float32Array; stepPositions: Float32Array;
   laneBins: { start: number; end: number }[]; profile: DetailProfile; axis: DetailAxis; audioMax: number;
+  featureDomain?: 'spatial' | 'temporal'; coordinates?: Float64Array; lanePanPositions?: Float32Array; segmentStarts?: number[];
+  spatialGradient?: Float32Array; spatialCurvature?: Float32Array;
+  contextPlan?: ContextPlan;
 }
 export interface DetailView {
   mappingVersion: string; rows: number; cols: number; rowBins: DetailBin[]; colBins: DetailBin[];
   grid: Float32Array; validCounts: Uint32Array; totals: Uint32Array; included: number; validTotal: number; frames: DetailFrames;
 }
-export interface DetailOptions { resolution: DetailResolution; profile: DetailProfile; axis: DetailAxis; bands: 8 | 16; crop?: NativeCrop; audioMax: number }
+export interface DetailOptions { resolution: DetailResolution; profile: DetailProfile; axis: DetailAxis; bands: 8 | 16; crop?: NativeCrop; audioMax: number; temporalSummary?: boolean }
 export interface DetailControls {
   volume: number; monitor: number; music: boolean; from: number; to: number; reverse: boolean; stems: number[];
   arrangement?: 'context' | 'legacy'; referenceGain?: number; referenceSolo?: boolean; space?: number;
 }
-export interface DetailTick { cursor: number; step: number; done: boolean; peak: number; limited: number }
+export interface DetailTick { cursor: number; step: number; done: boolean; peak: number; limited: number; buffering?: boolean }
 export interface ContextVoice {
   lane: number; valid: boolean; mean: number | null; p90: number; excess: number; spread: number; edge: number; note: number;
 }
 export interface ContextWindow { startStep: number; endStep: number; voices: ContextVoice[] }
-export interface ContextPlan { version: string; windowSteps: number; windows: ContextWindow[]; gradient: Float32Array; curvature: Float32Array }
+export interface ContextPlan { version: string; windowSteps: number; windows: ContextWindow[]; gradient: Float32Array; curvature: Float32Array; stepWindows?: Int32Array }
