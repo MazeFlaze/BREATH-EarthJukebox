@@ -351,13 +351,18 @@ export function buildResolvedTerritory(
 
 /**
  * Resolves a country/territory by ISO numeric code or name (loading worldBoundaries on demand).
+ * Callers that only need fast boot hydration on non-map routes can pass resolution="110m".
  */
 export async function resolveTerritoryByCodeOrName(
   codeOrName: string,
   idOverride?: string,
-  nameOverride?: string
+  nameOverride?: string,
+  resolution: "110m" | "50m" = "50m"
 ): Promise<ResolvedTerritorySelection | null> {
-  const bundle = await loadWorldBoundaries();
+  const bundle =
+    resolution === "110m"
+      ? (cachedDetailedBundle ?? (await loadWorldBoundariesQuick()))
+      : await loadWorldBoundaries();
   const feat = findTerritoryFeature(bundle, codeOrName);
   if (!feat) return null;
   return buildResolvedTerritory(feat, idOverride, nameOverride);
