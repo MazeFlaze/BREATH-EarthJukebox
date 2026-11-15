@@ -15,6 +15,25 @@ let regionCrops = null;
 const rasterCache = new Map();
 /** @type {WeakMap<object, { width: number; height: number; data: Uint8ClampedArray }>} */
 const displayRasterCache = new WeakMap();
+/** @type {Map<string, Promise<{ width: number; height: number; norms: Float32Array } | null>>} */
+const scalarGridCache = new Map();
+const MAX_SCALAR_GRID_CACHE = 16;
+
+const HASH_SLOTS = 4096;
+/** @type {Record<string, { keys: Int32Array; vals: Float32Array }>} */
+const decodeMemoByCmap = {};
+
+function getDecodeMemo(cmap) {
+  let memo = decodeMemoByCmap[cmap];
+  if (!memo) {
+    const keys = new Int32Array(HASH_SLOTS);
+    keys.fill(-1);
+    const vals = new Float32Array(HASH_SLOTS);
+    memo = { keys, vals };
+    decodeMemoByCmap[cmap] = memo;
+  }
+  return memo;
+}
 
 /**
  * Fetches and decodes a raster asset once inside this worker via OffscreenCanvas.
@@ -105,10 +124,22 @@ function displayRaster(source) {
 
 function decodeColormapNormalized(r, g, b, a, cmap) {
   if (a < 24 || !expandedLuts) return null;
+  const packed = (r << 16) | (g << 8) | b;
+  const memo = getDecodeMemo(cmap);
+  const slot = ((packed * 2654435761) >>> 20) & (HASH_SLOTS - 1);
+  if (memo.keys[slot] === packed) {
+    const cached = memo.vals[slot];
+    return cached < 0 ? null : cached;
+  }
+
   const drBg = r - bgMaskRgb[0];
   const dgBg = g - bgMaskRgb[1];
   const dbBg = b - bgMaskRgb[2];
-  if (drBg * drBg + dgBg * dgBg + dbBg * dbBg < 180) return null;
+  if (drBg * drBg + dgBg * dgBg + dbBg * dbBg < 180) {
+    memo.keys[slot] = packed;
+    memo.vals[slot] = -1;
+    return null;
+  }
 
   const lut = expandedLuts[cmap];
   if (!lut) return null;
@@ -125,7 +156,81 @@ function decodeColormapNormalized(r, g, b, a, cmap) {
       bestIdx = i;
     }
   }
-  return bestIdx / (lutBins - 1);
+  const norm = bestIdx / (lutBins - 1);
+  memo.keys[slot] = packed;
+  memo.vals[slot] = norm;
+  return norm;
+}
+
+/**
+ * Decodes each (imageUrl, cmap) display frame once into a compact normalized Float32Array (-1 masked)
+ * so Mercator overlay tiles only perform O(1) bilinear scalar interpolation per pixel.
+ */
+function getDisplayScalarGrid(imageUrl, cmap) {
+  const safeUrl = new URL(imageUrl, self.location.origin).href;
+  const key = `${safeUrl}::${cmap}`;
+  const existing = scalarGridCache.get(key);
+  if (existing) {
+    scalarGridCache.delete(key);
+    scalarGridCache.set(key, existing);
+    return existing;
+  }
+
+  if (scalarGridCache.size >= MAX_SCALAR_GRID_CACHE) {
+    const oldest = scalarGridCache.keys().next().value;
+    if (oldest !== undefined) scalarGridCache.delete(oldest);
+  }
+
+  const promise = (async () => {
+    const original = await loadRasterPixels(imageUrl, 2048);
+    const raster = original ? displayRaster(original) : null;
+    if (!raster) return null;
+    const total = raster.width * raster.height;
+    const norms = new Float32Array(total);
+    const data = raster.data;
+    for (let i = 0; i < total; i += 1) {
+      const idx = i * 4;
+      const t = decodeColormapNormalized(data[idx], data[idx + 1], data[idx + 2], data[idx + 3], cmap);
+      norms[i] = t === null ? -1 : t;
+    }
+    return { width: raster.width, height: raster.height, norms };
+  })().catch((err) => {
+    scalarGridCache.delete(key);
+    throw err;
+  });
+
+  scalarGridCache.set(key, promise);
+  return promise;
+}
+
+function sampleScalarSmooth(grid, lat, lon) {
+  const x = (((((lon + 180) % 360) + 360) % 360) / 360) * grid.width - 0.5;
+  const y = Math.max(0, Math.min(grid.height - 1, ((90 - lat) / 180) * grid.height - 0.5));
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const fx = x - x0;
+  const fy = y - y0;
+  const ax = ((x0 % grid.width) + grid.width) % grid.width;
+  const bx = (ax + 1) % grid.width;
+  const by = Math.min(grid.height - 1, y0 + 1);
+  const norms = grid.norms;
+  const v00 = norms[y0 * grid.width + ax];
+  const v10 = norms[y0 * grid.width + bx];
+  const v01 = norms[by * grid.width + ax];
+  const v11 = norms[by * grid.width + bx];
+  if (v00 < 0 && v10 < 0 && v01 < 0 && v11 < 0) return -1;
+
+  let weightSum = 0;
+  let valSum = 0;
+  const w00 = (1 - fx) * (1 - fy);
+  const w10 = fx * (1 - fy);
+  const w01 = (1 - fx) * fy;
+  const w11 = fx * fy;
+  if (v00 >= 0) { valSum += v00 * w00; weightSum += w00; }
+  if (v10 >= 0) { valSum += v10 * w10; weightSum += w10; }
+  if (v01 >= 0) { valSum += v01 * w01; weightSum += w01; }
+  if (v11 >= 0) { valSum += v11 * w11; weightSum += w11; }
+  return weightSum >= 0.45 ? valSum / weightSum : -1;
 }
 
 function sampleEquirectangularPixel(raster, lat, lon) {
@@ -139,33 +244,6 @@ function sampleEquirectangularPixel(raster, lat, lon) {
     raster.data[idx + 1],
     raster.data[idx + 2],
     raster.data[idx + 3],
-  ];
-}
-
-function sampleEquirectangularSmooth(raster, lat, lon) {
-  const x = (((((lon + 180) % 360) + 360) % 360) / 360) * raster.width - 0.5;
-  const y = Math.max(0, Math.min(raster.height - 1, ((90 - lat) / 180) * raster.height - 0.5));
-  const x0 = Math.floor(x);
-  const y0 = Math.floor(y);
-  const fx = x - x0;
-  const fy = y - y0;
-  const ax = ((x0 % raster.width) + raster.width) % raster.width;
-  const bx = (ax + 1) % raster.width;
-  const by = Math.min(raster.height - 1, y0 + 1);
-  const a = (y0 * raster.width + ax) * 4;
-  const b = (y0 * raster.width + bx) * 4;
-  const c = (by * raster.width + ax) * 4;
-  const d = (by * raster.width + bx) * 4;
-  const data = raster.data;
-  const w00 = (1 - fx) * (1 - fy);
-  const w10 = fx * (1 - fy);
-  const w01 = (1 - fx) * fy;
-  const w11 = fx * fy;
-  return [
-    data[a] * w00 + data[b] * w10 + data[c] * w01 + data[d] * w11,
-    data[a + 1] * w00 + data[b + 1] * w10 + data[c + 1] * w01 + data[d + 1] * w11,
-    data[a + 2] * w00 + data[b + 2] * w10 + data[c + 2] * w01 + data[d + 2] * w11,
-    data[a + 3] * w00 + data[b + 3] * w10 + data[c + 3] * w01 + data[d + 3] * w11,
   ];
 }
 
@@ -192,43 +270,44 @@ function edgeFeatherAlpha(lat, lon, bounds) {
   return Math.max(0, Math.min(1, Math.min(dx, dy)));
 }
 
-function intensityToEditorialRgba(t) {
-  const clamped = Math.max(0, Math.min(1, t));
-  if (clamped < 0.18) return [0, 0, 0, 0];
+function writeEditorialRgba(t, out, dst) {
+  const clamped = t < 0 ? 0 : t > 1 ? 1 : t;
+  if (clamped < 0.18) return false;
+  let r;
+  let g;
+  let b;
+  let a;
   if (clamped < 0.3) {
     const k = (clamped - 0.18) / 0.12;
-    return [
-      Math.round(28 + k * 24),
-      Math.round(82 + k * 54),
-      Math.round(74 + k * 46),
-      Math.round(k * 112),
-    ];
-  }
-  if (clamped < 0.62) {
+    r = Math.round(28 + k * 24);
+    g = Math.round(82 + k * 54);
+    b = Math.round(74 + k * 46);
+    a = Math.round(k * 112);
+  } else if (clamped < 0.62) {
     const k = (clamped - 0.3) / 0.32;
-    return [
-      Math.round(52 + k * 138),
-      Math.round(136 + k * 56),
-      Math.round(120 - k * 8),
-      Math.round(112 + k * 58),
-    ];
-  }
-  if (clamped < 0.85) {
+    r = Math.round(52 + k * 138);
+    g = Math.round(136 + k * 56);
+    b = Math.round(120 - k * 8);
+    a = Math.round(112 + k * 58);
+  } else if (clamped < 0.85) {
     const k = (clamped - 0.62) / 0.23;
-    return [
-      Math.round(190 + k * 34),
-      Math.round(192 - k * 22),
-      Math.round(112 - k * 42),
-      Math.round(170 + k * 32),
-    ];
+    r = Math.round(190 + k * 34);
+    g = Math.round(192 - k * 22);
+    b = Math.round(112 - k * 42);
+    a = Math.round(170 + k * 32);
+  } else {
+    const k = (clamped - 0.85) / 0.15;
+    r = Math.round(224 - k * 14);
+    g = Math.round(170 - k * 68);
+    b = Math.round(70 - k * 22);
+    a = Math.round(202 + k * 24);
   }
-  const k = (clamped - 0.85) / 0.15;
-  return [
-    Math.round(224 - k * 14),
-    Math.round(170 - k * 68),
-    Math.round(70 - k * 22),
-    Math.round(202 + k * 24),
-  ];
+  if (a <= 0) return false;
+  out[dst] = r;
+  out[dst + 1] = g;
+  out[dst + 2] = b;
+  out[dst + 3] = a;
+  return true;
 }
 
 async function renderBaseTile(z, x, y) {
@@ -298,9 +377,8 @@ async function renderBaseTile(z, x, y) {
 }
 
 async function renderOverlayTile(imageUrl, cmap, z, x, y) {
-  const original = await loadRasterPixels(imageUrl, 1280);
-  const raster = original ? displayRaster(original) : null;
-  if (!raster) return { empty: true, out: null };
+  const grid = await getDisplayScalarGrid(imageUrl, cmap);
+  if (!grid) return { empty: true, out: null };
 
   const out = new Uint8ClampedArray(TILE_SIZE * TILE_SIZE * 4);
   const scale = 2 ** z;
@@ -315,17 +393,10 @@ async function renderOverlayTile(imageUrl, cmap, z, x, y) {
     const lat = (Math.atan(Math.sinh(Math.PI * (1 - 2 * normY))) * 180) / Math.PI;
     const rowOffset = py * TILE_SIZE * 4;
     for (let px = 0; px < TILE_SIZE; px += 1) {
-      const [r, g, b, a] = sampleEquirectangularSmooth(raster, lat, lons[px]);
-      const t = decodeColormapNormalized(r, g, b, a, cmap);
-      const dst = rowOffset + px * 4;
-      if (t !== null) {
-        const [or, og, ob, oa] = intensityToEditorialRgba(t);
-        if (oa > 0) {
+      const t = sampleScalarSmooth(grid, lat, lons[px]);
+      if (t >= 0) {
+        if (writeEditorialRgba(t, out, rowOffset + px * 4)) {
           hasOpaque = true;
-          out[dst] = or;
-          out[dst + 1] = og;
-          out[dst + 2] = ob;
-          out[dst + 3] = oa;
         }
       }
     }
@@ -343,6 +414,31 @@ self.onmessage = async (event) => {
     lutBins = typeof msg.lutBins === "number" ? msg.lutBins : 128;
     bgMaskRgb = Array.isArray(msg.bgMaskRgb) ? msg.bgMaskRgb : [7, 11, 20];
     regionCrops = msg.regionCrops ?? null;
+    return;
+  }
+
+  if (msg.type === "preloadBase") {
+    const { id } = msg;
+    try {
+      await Promise.all([
+        loadRasterPixels("/images/earth-blue-marble.png", 1600),
+        loadRasterPixels("/images/earth-clouds-hires.jpg", 1024).catch(() => null),
+      ]);
+      self.postMessage({ id, status: "ok", empty: true });
+    } catch (err) {
+      self.postMessage({
+        id,
+        status: "error",
+        message: err instanceof Error ? err.message : "Base preload error",
+      });
+    }
+    return;
+  }
+
+  if (msg.type === "preloadOverlay") {
+    if (typeof msg.imageUrl === "string" && typeof msg.cmap === "string") {
+      getDisplayScalarGrid(msg.imageUrl, msg.cmap).catch(() => undefined);
+    }
     return;
   }
 
