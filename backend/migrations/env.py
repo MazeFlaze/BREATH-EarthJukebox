@@ -1,3 +1,4 @@
+import os
 import sys
 from logging.config import fileConfig
 from pathlib import Path
@@ -15,18 +16,24 @@ for p in [str(backend_dir), str(project_root)]:
         sys.path.insert(0, p)
 
 try:
-    from backend.src.core.database import Base, db_url
+    from backend.src.core.database import Base, db_url, normalize_database_url
+    from backend.src.core.config import settings
     from backend.src.models import entities
 except ImportError:
-    from src.core.database import Base, db_url
+    from src.core.database import Base, db_url, normalize_database_url
+    from src.core.config import settings
     from src.models import entities
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
 
+# For migrations on Neon, prefer direct unpooled connection string (DATABASE_URL_UNPOOLED)
+unpooled_url = getattr(settings, "DATABASE_URL_UNPOOLED", None) or os.getenv("DATABASE_URL_UNPOOLED")
+migration_db_url = normalize_database_url(unpooled_url) if unpooled_url else db_url
+
 # Set sqlalchemy.url dynamically from application settings
-config.set_main_option("sqlalchemy.url", db_url)
+config.set_main_option("sqlalchemy.url", migration_db_url)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
