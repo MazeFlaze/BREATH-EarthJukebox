@@ -95,6 +95,7 @@ frontend/tsconfig.tsbuildinfo
 *.sqlite3
 backend/src/data/raw/*
 !backend/src/data/raw/.gitkeep
+backend/src/data/eda_outputs/*.png
 
 # SQLite WAL/Journal sidecar files
 *.db-wal

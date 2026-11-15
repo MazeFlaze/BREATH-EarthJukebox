@@ -1,6 +1,8 @@
+import json
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional, Union
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -45,12 +47,43 @@ class Settings(BaseSettings):
     CACHE_TTL_SECONDS: int = 3600
     CACHE_MAX_SIZE: int = 1000
 
-    # CORS Allowed Origins
-    CORS_ORIGINS: List[str] = [
+    # CORS Allowed Origins (accepts JSON array or comma-separated string in env)
+    CORS_ORIGINS: Union[List[str], str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "https://localhost:3000",
     ]
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, value: Any) -> List[str]:
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return []
+            if stripped.startswith("["):
+                try:
+                    parsed = json.loads(stripped)
+                    if isinstance(parsed, list):
+                        return [
+                            str(item).strip().rstrip("/") if str(item).strip() != "*" else "*"
+                            for item in parsed
+                            if str(item).strip()
+                        ]
+                except json.JSONDecodeError:
+                    pass
+            return [
+                item.strip().rstrip("/") if item.strip() != "*" else "*"
+                for item in stripped.split(",")
+                if item.strip()
+            ]
+        if isinstance(value, (list, tuple)):
+            return [
+                str(item).strip().rstrip("/") if str(item).strip() != "*" else "*"
+                for item in value
+                if str(item).strip()
+            ]
+        return []
 
     model_config = SettingsConfigDict(
         env_file=(".env.local", ".env", "backend/.env.local", "backend/.env", "../.env.local", "../.env"),

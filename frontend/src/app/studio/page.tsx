@@ -78,6 +78,8 @@ export default function StudioPage() {
     timeIndex,
     mapping,
     regionStats,
+    backendStatus,
+    refreshBackendConnection,
     setActiveLayer,
     getLayerRestriction,
     setBasemapMode,
@@ -255,7 +257,25 @@ export default function StudioPage() {
 
               <BasemapSwitcher compact value={basemapMode} onChange={setBasemapMode} />
 
-              <DataBadge label={regionStats.sourceLabel} />
+              <DataBadge
+                label={
+                  regionStats.loading
+                    ? backendStatus === "live"
+                      ? "Live API · Sampling…"
+                      : "Sampling GEOS-CF…"
+                    : regionStats.sourceLabel
+                }
+              />
+              {backendStatus === "offline" && (
+                <button
+                  type="button"
+                  className="b-inline-tool"
+                  onClick={() => void refreshBackendConnection()}
+                  title="Retry connecting to FastAPI backend"
+                >
+                  Retry API
+                </button>
+              )}
             </div>
 
             <div className="b-studio-layer-bar" role="region" aria-label="Atmospheric layer controls">

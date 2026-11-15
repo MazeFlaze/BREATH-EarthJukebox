@@ -68,6 +68,9 @@ export default function ExplorePage() {
     camera,
     mapping,
     regionStats,
+    backendStatus,
+    availableTimestamps,
+    refreshBackendConnection,
     canUndoPolygon,
     canRedoPolygon,
     setActiveLayer,
@@ -225,7 +228,15 @@ export default function ExplorePage() {
           <h1>Earth Explorer</h1>
           <p>Browse territory borders overlaid with NASA air quality fields and click any country or draw a basin to hear its curve.</p>
         </div>
-        <DataBadge label="NASA GEOS-CF v2 · 12 Nov 2026" />
+        <DataBadge
+          label={
+            regionStats.sourceKind === "backend-netcdf" || backendStatus === "live"
+              ? `NASA GEOS-CF v2 · Live API (${(availableTimestamps[0] ?? timeSlots[0] ?? "2026-11-12").slice(0, 10)})`
+              : backendStatus === "checking"
+              ? "NASA GEOS-CF v2 · Checking API"
+              : `NASA GEOS-CF v2 · Offline Raster (${(timeSlots[0] ?? "2026-11-12").slice(0, 10)})`
+          }
+        />
       </div>
 
       <div className="b-container b-explore-toolbar">
@@ -665,7 +676,19 @@ export default function ExplorePage() {
                 </div>
                 <div>
                   <span>Source</span>
-                  <strong>{regionStats.sourceLabel}</strong>
+                  <strong style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    {regionStats.sourceLabel}
+                    {backendStatus === "offline" && (
+                      <button
+                        type="button"
+                        className="b-inline-tool"
+                        onClick={() => void refreshBackendConnection()}
+                        title="Retry connecting to FastAPI backend"
+                      >
+                        Retry API
+                      </button>
+                    )}
+                  </strong>
                 </div>
               </div>
 

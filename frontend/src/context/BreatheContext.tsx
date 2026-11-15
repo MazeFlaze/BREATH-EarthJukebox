@@ -21,7 +21,11 @@ import {
   presetSelections,
   timeSlots,
 } from "@/lib/breatheData";
-import { fetchBackendRegionStats, samplePolygonSeries } from "@/lib/geosCfRaster";
+import {
+  fetchBackendRegionStats,
+  resetBackendCircuitBreaker,
+  samplePolygonSeries,
+} from "@/lib/geosCfRaster";
 import { zoomForBounds } from "@/lib/geoUtils";
 import {
   buildResolvedTerritory,
@@ -31,6 +35,13 @@ import {
   loadWorldBoundariesQuick,
   resolveTerritoryByCodeOrName,
 } from "@/lib/worldBoundaries";
+import {
+  checkBackendHealth,
+  fetchBackendLocations,
+  fetchDatasetAvailability,
+  type BackendConnectionState,
+} from "@/services/backendApi";
+import { dataService } from "@/services/dataService";
 import { sonificationService } from "@/services/sonificationService";
 import type {
   AudioCompositionSpec,
@@ -127,6 +138,9 @@ interface BreatheContextValue {
   mapping: SonificationMapping;
   regionStats: RegionStats;
   regionSeries: number[];
+  backendStatus: BackendConnectionState;
+  availableTimestamps: string[];
+  refreshBackendConnection: () => Promise<void>;
   savedWorks: GalleryWork[];
   bookmarkedIds: string[];
   canUndoPolygon: boolean;
@@ -223,6 +237,61 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
     isMock: false,
     loading: true,
   }));
+
+  const [backendStatus, setBackendStatus] = useState<BackendConnectionState>("checking");
+  const [availableTimestamps, setAvailableTimestamps] = useState<string[]>([...timeSlots]);
+
+  const refreshBackendConnection = useCallback(async () => {
+    setBackendStatus("checking");
+    resetBackendCircuitBreaker();
+    dataService.resetBackendCheck();
+    const [health, availability] = await Promise.all([
+      checkBackendHealth(),
+      fetchDatasetAvailability("geos-cf-v2-aqc"),
+      fetchBackendLocations(),
+      dataService.getDataset(),
+    ]);
+    if (health) {
+      resetBackendCircuitBreaker();
+      setBackendStatus("live");
+      if (availability && availability.availableTimes.length > 0) {
+        setAvailableTimestamps(availability.availableTimes);
+      }
+    } else {
+      setBackendStatus("offline");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isMapWorkspace) return;
+    let cancelled = false;
+    const cancelIdle = scheduleWhenIdle(() => {
+      if (cancelled) return;
+      void (async () => {
+        const [health, availability] = await Promise.all([
+          checkBackendHealth(),
+          fetchDatasetAvailability("geos-cf-v2-aqc"),
+          fetchBackendLocations(),
+          dataService.getDataset(),
+        ]);
+        if (cancelled) return;
+        if (health) {
+          resetBackendCircuitBreaker();
+          setBackendStatus("live");
+          if (availability && availability.availableTimes.length > 0) {
+            setAvailableTimestamps(availability.availableTimes);
+          }
+        } else {
+          setBackendStatus("offline");
+        }
+      })();
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      cancelIdle();
+    };
+  }, [isMapWorkspace]);
 
   const [regionSeries, setRegionSeries] = useState<number[]>([64, 68, 72, 78, 74, 69, 66, 70]);
   const [savedWorks, setSavedWorks] = useState<GalleryWork[]>([]);
@@ -436,7 +505,12 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
       selection.polygon,
       selection.boundaryGeometry
     ).then((stats) => {
-      if (!cancelled) setRegionStats(stats);
+      if (!cancelled) {
+        setRegionStats(stats);
+        if (stats.sourceKind === "backend-netcdf") {
+          setBackendStatus("live");
+        }
+      }
     });
 
     return () => {
@@ -844,6 +918,9 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
       mapping,
       regionStats,
       regionSeries,
+      backendStatus,
+      availableTimestamps,
+      refreshBackendConnection,
       savedWorks,
       bookmarkedIds,
       canUndoPolygon: historyIndex > 0,
@@ -888,6 +965,9 @@ export function BreatheProvider({ children }: { children: React.ReactNode }) {
       mapping,
       regionStats,
       regionSeries,
+      backendStatus,
+      availableTimestamps,
+      refreshBackendConnection,
       savedWorks,
       bookmarkedIds,
       historyIndex,
