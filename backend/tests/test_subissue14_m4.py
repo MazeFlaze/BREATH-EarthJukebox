@@ -64,10 +64,15 @@ def test_single_roi_region_jukebox_endpoint_drag_box_and_center():
 
     summary = data["summary"]
     assert summary["validCount"] >= 1
+    assert summary["min"] == pytest.approx(1.2e-8, rel=0.05)
+    assert summary["displayMin"] == pytest.approx(12.0, rel=0.05)
+    assert summary["normalizedMin"] == pytest.approx(ObservationNormalizer.normalize("NO2", summary["min"], method="log_scale"))
     assert summary["p90"] == pytest.approx(1.2e-8, rel=0.05)
     assert summary["displayP90"] == pytest.approx(12.0, rel=0.05)
     assert summary["normalizedP90"] == pytest.approx(ObservationNormalizer.normalize("NO2", summary["p90"], method="log_scale"))
     assert sum(summary["tierRatios"].values()) == pytest.approx(1.0)
+    assert data["series"] is None
+    assert data["seriesTimestamps"] is None
 
     # Center + deltaDeg shorthand
     center_res = client.post(

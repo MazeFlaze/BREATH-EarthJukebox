@@ -410,10 +410,12 @@ class NetCDFProcessor:
         missing_count = total_count - valid_count
 
         if valid_count > 0:
+            min_val: Optional[float] = float(np.min(valid_values))
             mean_val: Optional[float] = float(np.mean(valid_values))
             p90_val: Optional[float] = float(np.percentile(valid_values, 90))
             max_val: Optional[float] = float(np.max(valid_values))
         else:
+            min_val = None
             mean_val = None
             p90_val = None
             max_val = None
@@ -429,6 +431,7 @@ class NetCDFProcessor:
                 "lon_max": float(lon_max),
             },
             "snapped_to_nearest": snapped_to_nearest,
+            "min": min_val,
             "mean": mean_val,
             "p90": p90_val,
             "max": max_val,
