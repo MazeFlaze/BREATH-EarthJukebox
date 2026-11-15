@@ -129,6 +129,16 @@ class RegionJukeboxRequest(BaseModel):
         "log_scale",
         description="Normalization strategy (defaults to EDA-calibrated 'log_scale' for perceptual audio)",
     )
+    includeSeries: bool = Field(
+        False,
+        description="Whether to include same-day regional mean time series in the response",
+    )
+    seriesStepHours: int = Field(
+        3,
+        ge=1,
+        le=24,
+        description="Minimum hour step between timestamps when sampling same-day regional series",
+    )
 
     @field_validator("polygons")
     @classmethod
@@ -162,12 +172,15 @@ class RegionTierRatios(BaseModel):
 
 class RegionSummaryMetrics(BaseModel):
     """Spatial aggregation summary with native units, ppbv display units, and acoustic [0, 1] scores."""
+    min: Optional[float] = None
     mean: Optional[float] = None
     p90: Optional[float] = None
     max: Optional[float] = None
+    displayMin: Optional[float] = None
     displayMean: Optional[float] = None
     displayP90: Optional[float] = None
     displayMax: Optional[float] = None
+    normalizedMin: Optional[float] = None
     normalizedMean: Optional[float] = None
     normalizedP90: Optional[float] = None
     normalizedMax: Optional[float] = None
@@ -192,4 +205,6 @@ class RegionJukeboxResponse(BaseModel):
     bounds: BoundingBoxInput
     normalization: Optional[NormalizationMeta] = None
     summary: RegionSummaryMetrics
+    series: Optional[List[float]] = None
+    seriesTimestamps: Optional[List[str]] = None
     provenance: ProvenanceMeta

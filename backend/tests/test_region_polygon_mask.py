@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 try:
     from backend.src.core.cache import app_cache
+    from backend.src.core.config import settings
     from backend.src.core.database import SessionLocal
     from backend.src.main import app
     from backend.src.processors.netcdf_processor import NetCDFProcessor
@@ -16,6 +17,7 @@ try:
     from backend.src.services.ingestion_service import IngestionService
 except ImportError:
     from src.core.cache import app_cache
+    from src.core.config import settings
     from src.core.database import SessionLocal
     from src.main import app
     from src.processors.netcdf_processor import NetCDFProcessor
@@ -180,3 +182,179 @@ def test_region_endpoint_polygon_mask_vs_bbox_no_cache_collision(tmp_path: Path)
             if asset_row:
                 db.delete(asset_row)
                 db.commit()
+
+
+def test_region_endpoint_min_metrics_and_polygon_exclusion(tmp_path: Path):
+    """Verify summary min/displayMin/normalizedMin are computed accurately for bounds and polygon masks."""
+    app_cache.clear()
+    raw_dir = tmp_path / "min_mask_nc"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    nc_path = raw_dir / "GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.20261114_0230z.R0.nc4"
+
+    lats = np.array([14.0, 15.0, 16.0], dtype=np.float32)
+    lons = np.array([104.0, 105.0, 106.0], dtype=np.float32)
+    times = pd.date_range("2026-11-14 02:30:00", periods=1)
+
+    vals = np.full((1, len(lats), len(lons)), 16.0, dtype=np.float32)
+    vals[0, 2, 0] = 4.0  # Northwest low outlier outside polygon mask
+    vals[0, 0, 2] = 28.0
+
+    ds = xr.Dataset(
+        data_vars={"PM25_RH35": (["time", "lat", "lon"], vals, {"units": "ug m-3"})},
+        coords={"time": times, "lat": lats, "lon": lons},
+    )
+    ds.to_netcdf(nc_path, engine="netcdf4")
+
+    with SessionLocal() as db:
+        service = IngestionService()
+        service.ingest_directory(db=db, raw_dir=raw_dir, skip_existing=False)
+        try:
+            bbox_resp = client.post(
+                "/api/v1/jukebox/region",
+                json={
+                    "datasetId": "geos-cf-v2-aqc",
+                    "timestamp": "2026-11-14T02:30:00Z",
+                    "variable": "PM25_RH35",
+                    "bounds": {"latMin": 13.5, "latMax": 16.5, "lonMin": 103.5, "lonMax": 106.5},
+                },
+            )
+            assert bbox_resp.status_code == 200, bbox_resp.text
+            bbox_summary = bbox_resp.json()["summary"]
+            assert bbox_summary["min"] == pytest.approx(4.0)
+            assert bbox_summary["displayMin"] == pytest.approx(4.0)
+            assert bbox_summary["normalizedMin"] is not None
+
+            poly_resp = client.post(
+                "/api/v1/jukebox/region",
+                json={
+                    "datasetId": "geos-cf-v2-aqc",
+                    "timestamp": "2026-11-14T02:30:00Z",
+                    "variable": "PM25_RH35",
+                    "bounds": {"latMin": 13.5, "latMax": 16.5, "lonMin": 103.5, "lonMax": 106.5},
+                    "polygons": [
+                        [
+                            {"lat": 13.7, "lon": 104.6},
+                            {"lat": 16.4, "lon": 105.6},
+                            {"lat": 16.4, "lon": 106.4},
+                            {"lat": 13.7, "lon": 106.4},
+                        ]
+                    ],
+                },
+            )
+            assert poly_resp.status_code == 200, poly_resp.text
+            poly_summary = poly_resp.json()["summary"]
+            assert poly_summary["min"] == pytest.approx(16.0)
+            assert poly_summary["displayMin"] == pytest.approx(16.0)
+        finally:
+            asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"geos-cf-v2-aqc:{nc_path.name}"))
+            asset_row = DatasetRepository.get_asset(db, asset_id)
+            if asset_row:
+                db.delete(asset_row)
+                db.commit()
+            copied = settings.DATA_STORAGE_ROOT / nc_path.name
+            if copied.exists():
+                copied.unlink()
+
+
+def test_region_endpoint_include_series_step_cache_and_reuse(tmp_path: Path):
+    """
+    Verify includeSeries samples same-day series cleanly using seriesStepHours,
+    reuses the primary open_dataset result, respects polygon masks, and isolates cache entries.
+    """
+    from unittest.mock import patch
+
+    app_cache.clear()
+    raw_dir = tmp_path / "series_nc"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+
+    slots = [
+        ("20261115_0030z", "2026-11-15 00:30:00", 2.0e-9),
+        ("20261115_0130z", "2026-11-15 01:30:00", 5.0e-9),
+        ("20261115_0330z", "2026-11-15 03:30:00", 8.0e-9),
+    ]
+    lats = np.array([14.0, 15.0, 16.0], dtype=np.float32)
+    lons = np.array([104.0, 105.0, 106.0], dtype=np.float32)
+    nc_paths = []
+
+    for tag, ts_str, no2_val in slots:
+        nc_path = raw_dir / f"GEOS.cf.ana.aqc_tavg_1hr_glo_L1440x721_slv.{tag}.R0.nc4"
+        nc_paths.append(nc_path)
+        vals = np.full((1, len(lats), len(lons)), no2_val, dtype=np.float32)
+        ds = xr.Dataset(
+            data_vars={"NO2": (["time", "lat", "lon"], vals, {"units": "mol mol-1"})},
+            coords={"time": pd.date_range(ts_str, periods=1), "lat": lats, "lon": lons},
+        )
+        ds.to_netcdf(nc_path, engine="netcdf4")
+
+    with SessionLocal() as db:
+        service = IngestionService()
+        service.ingest_directory(db=db, raw_dir=raw_dir, skip_existing=False)
+        try:
+            base_payload = {
+                "datasetId": "geos-cf-v2-aqc",
+                "timestamp": "2026-11-15T00:30:00Z",
+                "variable": "NO2",
+                "bounds": {"latMin": 14.5, "latMax": 15.5, "lonMin": 104.5, "lonMax": 105.5},
+            }
+
+            with patch.object(
+                NetCDFProcessor, "open_dataset", wraps=NetCDFProcessor.open_dataset
+            ) as wrapped_open:
+                series_resp = client.post(
+                    "/api/v1/jukebox/region",
+                    json={**base_payload, "includeSeries": True},
+                )
+                assert series_resp.status_code == 200, series_resp.text
+                # Expect 2 opens total: primary 00:30Z (reused in series) + 03:30Z (01:30Z skipped by default 3h step)
+                assert wrapped_open.call_count == 2
+
+            series_data = series_resp.json()
+            assert series_data["displayUnit"] == "ppbv"
+            assert series_data["summary"]["displayMin"] == pytest.approx(2.0)
+            assert series_data["seriesTimestamps"] == [
+                "2026-11-15T00:30:00Z",
+                "2026-11-15T03:30:00Z",
+            ]
+            assert series_data["series"] == pytest.approx([2.0, 8.0])
+
+            # Ensure includeSeries=False does NOT collide with the cached includeSeries=True entry
+            no_series_resp = client.post("/api/v1/jukebox/region", json=base_payload)
+            assert no_series_resp.status_code == 200, no_series_resp.text
+            no_series_data = no_series_resp.json()
+            assert no_series_data["series"] is None
+            assert no_series_data["seriesTimestamps"] is None
+
+            # Verify seriesStepHours=1 includes all 3 timestamps in chronological order
+            hourly_resp = client.post(
+                "/api/v1/jukebox/region",
+                json={
+                    **base_payload,
+                    "includeSeries": True,
+                    "seriesStepHours": 1,
+                    "polygon": [
+                        {"lat": 14.5, "lon": 104.5},
+                        {"lat": 15.5, "lon": 104.5},
+                        {"lat": 15.5, "lon": 105.5},
+                        {"lat": 14.5, "lon": 105.5},
+                    ],
+                },
+            )
+            assert hourly_resp.status_code == 200, hourly_resp.text
+            hourly_data = hourly_resp.json()
+            assert hourly_data["maskMode"] == "polygon"
+            assert hourly_data["seriesTimestamps"] == [
+                "2026-11-15T00:30:00Z",
+                "2026-11-15T01:30:00Z",
+                "2026-11-15T03:30:00Z",
+            ]
+            assert hourly_data["series"] == pytest.approx([2.0, 5.0, 8.0])
+        finally:
+            for nc_path in nc_paths:
+                asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"geos-cf-v2-aqc:{nc_path.name}"))
+                asset_row = DatasetRepository.get_asset(db, asset_id)
+                if asset_row:
+                    db.delete(asset_row)
+                    db.commit()
+                copied = settings.DATA_STORAGE_ROOT / nc_path.name
+                if copied.exists():
+                    copied.unlink()
