@@ -80,7 +80,7 @@ export function MapScanOverlay({
   const hasRegion = Boolean(boundaryGeometry || polygon.length >= 3);
 
   const [status, setStatus] = useState<ScanStatus>("idle");
-  const [scope, setScope] = useState<ScanScope>("viewport");
+  const [scope, setScope] = useState<ScanScope>(() => (hasRegion ? "region" : "viewport"));
   const [speed, setSpeed] = useState<ScanSpeedMultiplier>(1);
   const [readout, setReadout] = useState<ScanReadout>({
     lonLabel: "—",
@@ -111,11 +111,15 @@ export function MapScanOverlay({
 
   const effectiveScope: ScanScope = scope === "region" && hasRegion ? "region" : "viewport";
 
+  const prevHasRegionRef = useRef(hasRegion);
   useEffect(() => {
-    if (scope === "region" && !hasRegion) {
+    if (!prevHasRegionRef.current && hasRegion) {
+      setScope("region");
+    } else if (prevHasRegionRef.current && !hasRegion) {
       setScope("viewport");
     }
-  }, [scope, hasRegion]);
+    prevHasRegionRef.current = hasRegion;
+  }, [hasRegion]);
 
   // Auto-stop gracefully if switching onto an unavailable layer (e.g. AOD placeholder)
   useEffect(() => {
@@ -235,14 +239,48 @@ export function MapScanOverlay({
     const light = isLightRef.current;
     const grid = gridRef.current;
     const p = progressRef.current;
-    const yTop = Math.max(18, height * 0.08);
-    const yBottom = Math.max(yTop + 20, height * 0.91);
-    const xStart = grid?.summaries[0]?.x ?? Math.max(8, width * 0.015);
-    const xEnd = grid?.summaries[grid.cols - 1]?.x ?? width - xStart;
+
+    const isRegionScan = Boolean(
+      grid?.scope === "region" &&
+        grid.pixelBounds &&
+        grid.polygonRingsPixels &&
+        grid.polygonRingsPixels.length > 0
+    );
+
+    const xStart = isRegionScan
+      ? grid!.pixelBounds!.minX
+      : (grid?.summaries[0]?.x ?? 0);
+    const xEnd = isRegionScan
+      ? grid!.pixelBounds!.maxX
+      : (grid?.summaries[grid.cols - 1]?.x ?? width);
     const beamX = xStart + p * (xEnd - xStart);
 
-    // 1. Subtle trailing sage/pine wake behind playhead
-    const wakeW = 36;
+    const yTop = isRegionScan ? grid!.pixelBounds!.minY : 0;
+    const yBottom = isRegionScan ? grid!.pixelBounds!.maxY : height;
+
+    const colIdx = Math.min(
+      (grid?.cols ?? 1) - 1,
+      Math.max(0, Math.floor(p * (grid?.cols ?? 1)))
+    );
+    const curSegments = isRegionScan && grid?.columnSegments ? grid.columnSegments[colIdx] ?? [] : null;
+
+    // Isolate clipped region drawing
+    ctx.save();
+    if (isRegionScan && grid?.polygonRingsPixels) {
+      ctx.beginPath();
+      for (const ring of grid.polygonRingsPixels) {
+        if (ring.length === 0) continue;
+        ctx.moveTo(ring[0].x, ring[0].y);
+        for (let i = 1; i < ring.length; i += 1) {
+          ctx.lineTo(ring[i].x, ring[i].y);
+        }
+        ctx.closePath();
+      }
+      ctx.clip("evenodd");
+    }
+
+    // 1. Subtle trailing sage/pine wake behind playhead (clipped inside region)
+    const wakeW = isRegionScan ? Math.min(36, Math.max(12, (xEnd - xStart) * 0.2)) : 42;
     const wakeGrad = ctx.createLinearGradient(beamX - wakeW, 0, beamX, 0);
     if (light) {
       wakeGrad.addColorStop(0, "rgba(35, 105, 95, 0)");
@@ -254,7 +292,7 @@ export function MapScanOverlay({
     ctx.fillStyle = wakeGrad;
     ctx.fillRect(Math.max(0, beamX - wakeW), yTop, wakeW, yBottom - yTop);
 
-    // 2. Concentric collision ripples spawned at active air-quality hits
+    // 2. Concentric collision ripples spawned at active air-quality hits (clipped inside region)
     const ripples = ripplesRef.current;
     for (let i = 0; i < ripples.length; i += 1) {
       const rp = ripples[i];
@@ -298,6 +336,7 @@ export function MapScanOverlay({
       const gateThreshold = Math.max(0.14, 0.27 - mappingRef.current.density * 0.13);
 
       ctx.beginPath();
+      let started = false;
       for (let row = 0; row < grid.rows; row += 1) {
         const c0 = cellsLo[row];
         const c1 = cellsHi[row];
@@ -306,8 +345,12 @@ export function MapScanOverlay({
         const offsetX = active ? 2 + norm * 22 : 0;
         const px = beamX + offsetX;
         const py = c0.y;
-        if (row === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
+        if (!started) {
+          ctx.moveTo(px, py);
+          started = true;
+        } else {
+          ctx.lineTo(px, py);
+        }
       }
       ctx.strokeStyle = light ? "rgba(20, 77, 70, 0.7)" : "rgba(213, 227, 203, 0.84)";
       ctx.lineWidth = 1.65;
@@ -328,7 +371,7 @@ export function MapScanOverlay({
       }
     }
 
-    // 4. Primary vertical playhead beam + soft edge halo
+    // 4. Primary vertical playhead beam + soft edge halo (clipped inside region)
     ctx.beginPath();
     ctx.moveTo(beamX, yTop);
     ctx.lineTo(beamX, yBottom);
@@ -342,6 +385,31 @@ export function MapScanOverlay({
     ctx.lineWidth = 1.65;
     ctx.strokeStyle = light ? "#144d46" : "#f2f0e8";
     ctx.stroke();
+
+    ctx.restore(); // remove clipping
+
+    // 5. Region boundary endpoint laser caps (rendered at exact ray entry / exit points)
+    if (isRegionScan && curSegments && curSegments.length > 0) {
+      for (const seg of curSegments) {
+        // Top boundary bead
+        ctx.beginPath();
+        ctx.arc(beamX, seg.yTop, 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = light ? "#144d46" : "#ffffff";
+        ctx.fill();
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = light ? "rgba(255, 255, 255, 0.9)" : "rgba(20, 77, 70, 0.9)";
+        ctx.stroke();
+
+        // Bottom boundary bead
+        ctx.beginPath();
+        ctx.arc(beamX, seg.yBottom, 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = light ? "#144d46" : "#ffffff";
+        ctx.fill();
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = light ? "rgba(255, 255, 255, 0.9)" : "rgba(20, 77, 70, 0.9)";
+        ctx.stroke();
+      }
+    }
 
     ctx.restore();
   }, [containerSize.width, containerSize.height]);
@@ -496,8 +564,11 @@ export function MapScanOverlay({
     if (!layerDef.available) {
       return "Select PM2.5, NO2, SO2, CO, or O3 to launch the 2D scanline sonifier";
     }
+    if (hasRegion && scope === "region") {
+      return `Sweep vertical audio beam across selected region for ${layerDef.short} from West to East`;
+    }
     return `Sweep vertical audio beam across ${layerDef.short} from West to East`;
-  }, [layerDef.available, layerDef.short]);
+  }, [layerDef.available, layerDef.short, hasRegion, scope]);
 
   return (
     <>
@@ -514,7 +585,11 @@ export function MapScanOverlay({
               title={triggerTitle}
             >
               <AudioLines size={14} aria-hidden="true" />
-              <span>2D Scan · {layerDef.short}</span>
+              <span>
+                {hasRegion && scope === "region"
+                  ? `2D Region Scan · ${layerDef.short}`
+                  : `2D Scan · ${layerDef.short}`}
+              </span>
             </button>
           ) : (
             <div className="b-scan-bar" role="region" aria-label="2D Air Quality Scan Sonifier">
@@ -543,7 +618,7 @@ export function MapScanOverlay({
                   type="button"
                   className={effectiveScope === "viewport" ? "is-active" : undefined}
                   onClick={() => setScope("viewport")}
-                  title="Scan all visible air quality across 2D viewport"
+                  title="Sweep audio beam across full 2D viewport"
                 >
                   <Globe2 size={11} /> Viewport
                 </button>
@@ -554,8 +629,8 @@ export function MapScanOverlay({
                   disabled={!hasRegion}
                   title={
                     hasRegion
-                      ? "Filter scan triggers strictly inside active territory or drawn border"
-                      : "Select a country or draw a region to enable Region filter"
+                      ? "Sweep audio beam strictly inside active territory or drawn polygon border"
+                      : "Select a country or draw a region to enable Region scan"
                   }
                 >
                   <MapPin size={11} /> Region

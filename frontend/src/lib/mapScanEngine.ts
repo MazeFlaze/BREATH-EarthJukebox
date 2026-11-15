@@ -1,19 +1,38 @@
 import type * as maplibregl from "maplibre-gl";
-import { decodeRasterSample, getEditorialAccentRgb, type DecodedRaster } from "@/lib/geosCfRaster";
-import { computeBounds, normalizeLon, pointInGeometry } from "@/lib/geoUtils";
+import { decodeRasterSample, getEditorialAccentRgb, type DecodedRaster } from "./geosCfRaster";
+import { computeBounds, normalizeLon, pointInGeometry } from "./geoUtils";
 import type {
   GeoBounds,
   GeoPoint,
   LayerDefinition,
   ScanScope,
   SonificationMapping,
-} from "@/types/breathe";
+} from "../types/breathe";
 
 export const SCAN_COLS = 96;
 export const SCAN_ROWS = 16;
 export const BASE_SWEEP_DURATION_SEC = 12;
 export const RIPPLE_LIFE_SEC = 0.72;
 export const MAX_RIPPLES = 72;
+
+export interface PixelPoint {
+  x: number;
+  y: number;
+}
+
+export interface PixelBounds {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  width: number;
+  height: number;
+}
+
+export interface ColumnRaySegment {
+  yTop: number;
+  yBottom: number;
+}
 
 export interface ScanSampleCell {
   col: number;
@@ -48,6 +67,10 @@ export interface ScanFieldGrid {
   columns: ScanSampleCell[][];
   summaries: ScanColumnSummary[];
   inScopeHitCount: number;
+  scope: ScanScope;
+  pixelBounds?: PixelBounds;
+  polygonRingsPixels?: PixelPoint[][];
+  columnSegments?: ColumnRaySegment[][];
 }
 
 export interface ScanVoiceTrigger {
@@ -79,6 +102,133 @@ export function formatLonReadout(lon: number): string {
   return `${Math.abs(safe).toFixed(1)}°${hemi}`;
 }
 
+export function extractGeoRings(
+  geometryOrPolygon: GeoJSON.Polygon | GeoJSON.MultiPolygon | GeoPoint[]
+): Array<Array<[number, number]>> {
+  if (Array.isArray(geometryOrPolygon)) {
+    return [geometryOrPolygon.map((p) => [p.lon, p.lat] as [number, number])];
+  }
+  if (geometryOrPolygon.type === "Polygon") {
+    return geometryOrPolygon.coordinates as Array<Array<[number, number]>>;
+  }
+  if (geometryOrPolygon.type === "MultiPolygon") {
+    const rings: Array<Array<[number, number]>> = [];
+    for (const poly of geometryOrPolygon.coordinates) {
+      for (const ring of poly) {
+        rings.push(ring as Array<[number, number]>);
+      }
+    }
+    return rings;
+  }
+  return [];
+}
+
+export function computePolygonRingsPixels(
+  map: maplibregl.Map,
+  geometryOrPolygon: GeoJSON.Polygon | GeoJSON.MultiPolygon | GeoPoint[]
+): PixelPoint[][] {
+  const geoRings = extractGeoRings(geometryOrPolygon);
+  const pixelRings: PixelPoint[][] = [];
+
+  for (const ring of geoRings) {
+    if (ring.length < 3) continue;
+    const projected: PixelPoint[] = [];
+    for (const [lon, lat] of ring) {
+      try {
+        const p = map.project([lon, lat]);
+        if (Number.isFinite(p.x) && Number.isFinite(p.y)) {
+          projected.push({ x: p.x, y: p.y });
+        }
+      } catch {
+        // Ignore unprojectable coordinates
+      }
+    }
+    if (projected.length >= 3) {
+      pixelRings.push(projected);
+    }
+  }
+
+  return pixelRings;
+}
+
+export function computePixelBounds(rings: PixelPoint[][]): PixelBounds | null {
+  if (!rings.length) return null;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+
+  for (const ring of rings) {
+    for (const pt of ring) {
+      if (pt.x < minX) minX = pt.x;
+      if (pt.x > maxX) maxX = pt.x;
+      if (pt.y < minY) minY = pt.y;
+      if (pt.y > maxY) maxY = pt.y;
+    }
+  }
+
+  if (!Number.isFinite(minX) || !Number.isFinite(maxX) || minX >= maxX) {
+    return null;
+  }
+
+  return {
+    minX,
+    maxX,
+    minY,
+    maxY,
+    width: maxX - minX,
+    height: Math.max(1, maxY - minY),
+  };
+}
+
+export function computeRaySegmentsForX(
+  rings: PixelPoint[][],
+  x: number
+): ColumnRaySegment[] {
+  const yIntersections: number[] = [];
+
+  for (const ring of rings) {
+    const n = ring.length;
+    if (n < 3) continue;
+
+    for (let i = 0; i < n; i += 1) {
+      const p1 = ring[i];
+      const p2 = ring[(i + 1) % n];
+
+      // Jordan curve non-zero crossing convention for vertical ray at x:
+      // Half-open interval on x guarantees vertices are never double-counted.
+      if ((p1.x <= x && p2.x > x) || (p2.x <= x && p1.x > x)) {
+        const t = (x - p1.x) / (p2.x - p1.x);
+        const y = p1.y + t * (p2.y - p1.y);
+        yIntersections.push(y);
+      }
+    }
+  }
+
+  if (yIntersections.length < 2) return [];
+
+  yIntersections.sort((a, b) => a - b);
+
+  // Deduplicate very close intersections (within 0.75px)
+  const cleaned: number[] = [];
+  for (let i = 0; i < yIntersections.length; i += 1) {
+    if (cleaned.length === 0 || yIntersections[i] - cleaned[cleaned.length - 1] > 0.75) {
+      cleaned.push(yIntersections[i]);
+    }
+  }
+
+  const segments: ColumnRaySegment[] = [];
+  for (let i = 0; i + 1 < cleaned.length; i += 2) {
+    const top = cleaned[i];
+    const bottom = cleaned[i + 1];
+    if (bottom - top >= 0.5) {
+      segments.push({ yTop: top, yBottom: bottom });
+    }
+  }
+
+  return segments;
+}
+
 function pointWithinBounds(lat: number, lon: number, bounds: GeoBounds): boolean {
   if (lat < bounds.south || lat > bounds.north) return false;
   if (bounds.west <= bounds.east) {
@@ -90,6 +240,7 @@ function pointWithinBounds(lat: number, lon: number, bounds: GeoBounds): boolean
 /**
  * Samples the active visible 2D map viewport into a 96 x 16 lat/lon acoustic matrix synced to the
  * decoded NASA GEOS-CF v2 raster frame and optional territory/drawn polygon mask.
+ * When scope === "region", restricts the sweep and sampling grid strictly inside the polygon's pixel bounds.
  */
 export function buildScanFieldGrid(params: {
   map: maplibregl.Map;
@@ -110,18 +261,36 @@ export function buildScanFieldGrid(params: {
   const regionBounds =
     hasRegion && !boundaryGeometry && polygon && polygon.length >= 3 ? computeBounds(polygon) : null;
 
-  const xPad = Math.max(8, width * 0.015);
-  const yTop = Math.max(18, height * 0.08);
-  const yBottom = Math.max(yTop + 20, height * 0.91);
-  const usableW = Math.max(16, width - xPad * 2);
-  const usableH = Math.max(16, yBottom - yTop);
+  let polygonRingsPixels: PixelPoint[][] | undefined;
+  let pixelBounds: PixelBounds | undefined;
+  let columnSegments: ColumnRaySegment[][] | undefined;
+
+  if (hasRegion && scope === "region" && regionTarget) {
+    const projectedRings = computePolygonRingsPixels(map, regionTarget);
+    const bounds = computePixelBounds(projectedRings);
+    if (bounds && bounds.width >= 8 && bounds.height >= 8) {
+      polygonRingsPixels = projectedRings;
+      pixelBounds = bounds;
+      columnSegments = [];
+    }
+  }
+
+  const isAdaptiveRegion = Boolean(scope === "region" && pixelBounds && polygonRingsPixels);
+
+  const xStart = isAdaptiveRegion ? pixelBounds!.minX : 0;
+  const xEnd = isAdaptiveRegion ? pixelBounds!.maxX : width;
+  const usableW = Math.max(8, xEnd - xStart);
+
+  const yTopScreen = isAdaptiveRegion ? pixelBounds!.minY : 0;
+  const yBottomScreen = isAdaptiveRegion ? pixelBounds!.maxY : height;
+  const usableH = Math.max(8, yBottomScreen - yTopScreen);
 
   const columns: ScanSampleCell[][] = [];
   const summaries: ScanColumnSummary[] = [];
   let inScopeHitCount = 0;
 
   for (let col = 0; col < cols; col += 1) {
-    const x = xPad + (col / (cols - 1)) * usableW;
+    const x = xStart + (col / (cols - 1)) * usableW;
     const colCells: ScanSampleCell[] = [];
     let peakValue: number | null = null;
     let peakNorm = 0;
@@ -130,24 +299,29 @@ export function buildScanFieldGrid(params: {
 
     let midLon = 0;
     try {
-      midLon = normalizeLon(map.unproject([x, (yTop + yBottom) * 0.5]).lng);
+      midLon = normalizeLon(map.unproject([x, (yTopScreen + yBottomScreen) * 0.5]).lng);
     } catch {
       midLon = 0;
+    }
+
+    if (isAdaptiveRegion && columnSegments && polygonRingsPixels) {
+      const segs = computeRaySegmentsForX(polygonRingsPixels, x);
+      columnSegments.push(segs);
     }
 
     for (let row = 0; row < rows; row += 1) {
       // row 0 = bottom (South), row 15 = top (North) for ascending audio pitch mapping
       const fracBottom = row / (rows - 1);
-      const y = yBottom - fracBottom * usableH;
+      const y = yBottomScreen - fracBottom * usableH;
 
       let lat = 0;
       let lon = midLon;
       let validProj = true;
       try {
         const lngLat = map.unproject([x, y]);
-        lat = lngLat.lat;
+        lat = Math.max(-84.5, Math.min(84.5, lngLat.lat));
         lon = normalizeLon(lngLat.lng);
-        if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 84) {
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
           validProj = false;
         }
       } catch {
@@ -212,6 +386,10 @@ export function buildScanFieldGrid(params: {
     columns,
     summaries,
     inScopeHitCount,
+    scope,
+    pixelBounds,
+    polygonRingsPixels,
+    columnSegments,
   };
 }
 

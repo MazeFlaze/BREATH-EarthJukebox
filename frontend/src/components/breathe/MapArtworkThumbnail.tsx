@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { renderMapSnapshotToCanvas } from "@/lib/geosCfRaster";
 import type { GeoPoint, LayerKey } from "@/types/breathe";
 
@@ -19,7 +19,7 @@ interface MapArtworkThumbnailProps {
   className?: string;
 }
 
-export function MapArtworkThumbnail({
+export const MapArtworkThumbnail = React.memo(function MapArtworkThumbnail({
   center,
   zoom,
   polygon,
@@ -33,12 +33,38 @@ export function MapArtworkThumbnail({
   height,
   className = "",
 }: MapArtworkThumbnailProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [shouldRender, setShouldRender] = useState(
+    () => typeof IntersectionObserver === "undefined"
+  );
 
   useEffect(() => {
+    if (shouldRender) return;
+    const node = containerRef.current;
+    if (!node || typeof IntersectionObserver === "undefined") {
+      setShouldRender(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setShouldRender(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "240px 0px" }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [shouldRender]);
+
+  useEffect(() => {
+    if (!shouldRender) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    let cancelled = false;
+    const controller = new AbortController();
     void renderMapSnapshotToCanvas(canvas, {
       center,
       zoom,
@@ -48,18 +74,18 @@ export function MapArtworkThumbnail({
       variable,
       timeIndex,
       seriesPreview,
-    }).then(() => {
-      if (cancelled) return;
+      signal: controller.signal,
     });
     return () => {
-      cancelled = true;
+      controller.abort();
     };
-  }, [center, zoom, polygon, boundaryGeometry, territoryCode, variable, timeIndex, seriesPreview]);
+  }, [shouldRender, center, zoom, polygon, boundaryGeometry, territoryCode, variable, timeIndex, seriesPreview]);
 
   return (
     <div
+      ref={containerRef}
       className={`b-artwork-visual b-map-art ${className}`.trim()}
-      style={height ? { height } : undefined}
+      style={height ? { height } : { aspectRatio: "420 / 240" }}
     >
       <canvas
         ref={canvasRef}
@@ -73,4 +99,4 @@ export function MapArtworkThumbnail({
       )}
     </div>
   );
-}
+});
