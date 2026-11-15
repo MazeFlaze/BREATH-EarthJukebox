@@ -38,10 +38,14 @@ if (args.includes("--list")) {
   process.exit(0);
 }
 
-const result = spawnSync("npx", ["-y", "tsx", "--test", ...args, ...testFiles], {
+const locked = args.includes("--locked");
+const forwardedArgs = args.filter((arg) => arg !== "--locked");
+const result = spawnSync(locked ? process.execPath : "npx", locked
+  ? ["--require", resolve(frontendRoot, "scripts/register-typescript-tests.cjs"), "--test", ...forwardedArgs, ...testFiles]
+  : ["-y", "tsx", "--test", ...forwardedArgs, ...testFiles], {
   cwd: frontendRoot,
   stdio: "inherit",
-  shell: process.platform === "win32",
+  shell: !locked && process.platform === "win32",
 });
 
 if (result.error) {

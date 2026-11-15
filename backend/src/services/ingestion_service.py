@@ -83,9 +83,9 @@ class IngestionService:
             }
 
         # Ensure target file exists in raw storage root
-        target_path = settings.DATA_STORAGE_ROOT / path_obj.name
+        target_path = self.provider.raw_storage_dir / path_obj.name
         if path_obj != target_path:
-            settings.DATA_STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
+            self.provider.raw_storage_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path_obj, target_path)
 
         # 1. Upsert dataset source
@@ -219,14 +219,22 @@ class IngestionService:
         """
         start_dt = pd.to_datetime(start_time, utc=True).to_pydatetime()
         end_dt = pd.to_datetime(end_time, utc=True).to_pydatetime()
+        if start_dt > end_dt:
+            raise ValueError("Start time must not exceed end time")
+        if any((dt.minute != 30 or dt.second or dt.microsecond) for dt in (start_dt, end_dt)):
+            raise ValueError("AQC hourly means must be requested at HH:30:00 UTC")
+        unknown = set(variables or []) - set(self.provider.list_variables())
+        if unknown:
+            raise ValueError(f"Unsupported variables: {sorted(unknown)}")
         freq = f"{max(1, int(step_hours))}h"
         hours = pd.date_range(start=start_dt, end=end_dt, freq=freq)
 
         results = []
-        for h in hours:
+        for index, h in enumerate(hours):
             py_dt = h.to_pydatetime()
             iso_time = py_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
             logger.info(f"Processing remote NASA retrieval for {iso_time}")
+            print(f"[{index + 1}/{len(hours)}] {iso_time}", flush=True)
 
             if dry_run:
                 url = self.provider.build_remote_url(py_dt)
@@ -238,6 +246,7 @@ class IngestionService:
                 res = self.ingest_local_file(local_file, db=db, dry_run=False)
                 results.append(res)
             except Exception as e:
+                db.rollback()
                 logger.error(f"Failed remote ingest for {iso_time}: {e}")
                 results.append({"timestamp": iso_time, "status": "failed", "error": str(e)})
 

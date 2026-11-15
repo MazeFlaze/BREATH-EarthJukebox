@@ -3,6 +3,15 @@ import pandas as pd
 import pytest
 import xarray as xr
 from pathlib import Path
+import os
+import tempfile
+
+# Never materialize fixtures into the user's NASA archive or production database.
+_test_root = Path(tempfile.mkdtemp(prefix="breathe-pytest-"))
+os.environ["DATA_STORAGE_ROOT"] = str(_test_root / "raw")
+os.environ["NASA_ARCHIVE_ROOT"] = str(_test_root / "archive")
+os.environ["DATABASE_URL"] = "sqlite:///" + (_test_root / "test.db").as_posix()
+os.environ["DEBUG"] = "false"
 
 try:
     from backend.src.core.config import settings
