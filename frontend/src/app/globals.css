@@ -17,7 +17,7 @@ img { max-width:100%; }
 
 .b-page { min-height:100vh; overflow:hidden; }
 .b-container { width:min(100% - 64px,1536px); margin-inline:auto; }
-.b-header { height:78px; padding:0 max(32px,calc((100vw - 1536px)/2)); display:flex; align-items:center; justify-content:space-between; gap:24px; background:rgba(255,254,250,.96); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:50; backdrop-filter:blur(16px); }
+.b-header { height:78px; padding:0 max(32px,calc((100vw - 1536px)/2)); display:flex; align-items:center; justify-content:space-between; gap:24px; background:rgba(255,254,250,.98); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:50; }
 .b-brand { min-width:270px; display:flex; align-items:center; gap:13px; white-space:nowrap; }
 .b-brand-mark { width:37px; height:37px; border-radius:50%; background:var(--green); position:relative; overflow:hidden; display:block; flex:none; }
 .b-brand-mark span { position:absolute; left:-5px; right:-5px; height:2px; background:#dbe9dd; border-radius:50%; transform:rotate(8deg); }
@@ -134,3 +134,29 @@ h1 em,h2 em { font-weight:400; }
 .b-region-map { position:relative; height:645px; border:1px solid var(--line); border-radius:15px; overflow:hidden; background:#496f70; }.b-region-map .b-geo { height:100%; }.b-region-map .b-map-label { font-size:16px; }.b-region-map-label { position:absolute; top:20px; right:20px; z-index:5; display:grid; gap:4px; background:rgba(255,254,250,.95); padding:11px 15px; border:1px solid #d5e2d7; border-radius:10px; }.b-region-map-label span { font-size:9px; color:var(--green); letter-spacing:.16em; font-weight:800; }.b-region-map-label strong { font-size:12px; }.b-region-map-label small { font-size:10px; color:var(--muted); }
 .b-draw-toolbar { position:absolute; top:20px; left:20px; z-index:5; display:grid; gap:3px; border:1px solid #d9e1d9; border-radius:12px; background:rgba(255,254,250,.97); padding:5px; box-shadow:0 7px 26px #081f1b2b; }.b-draw-toolbar button { border:0; background:none; border-radius:8px; width:62px; height:54px; display:grid; place-items:center; gap:1px; font-size:9px; color:var(--ink); }.b-draw-toolbar button.is-active,.b-draw-toolbar button:hover { background:var(--green-soft); color:var(--green-dark); }.b-tool-divider { height:1px; background:var(--line); margin:3px 5px; }.b-region-workspace .b-timeline { margin-top:12px; }
 .b-region-details { border:1px solid var(--line); background:var(--paper); border-radius:15px; padding:20px 17px; align-self:start; }.b-region-details>.b-sidebar-title { padding-bottom:17px; border-bottom:1px solid var(--line); margin-bottom:18px; }.b-field-label { display:block; font-size:11px; font-weight:650; margin-bottom:7px; }.b-text-input { width:100%; height:40px; border:1px solid #cdd8cf; border-radius:8px; padding:0 11px; background:#fff; color:var(--ink); font-size:12px; }.b-region-details .b-metric-list { margin-top:12px; }.b-small-value { max-width:165px; font-size:10px!important; line-height:1.4; }.b-region-details .b-science-note { margin:14px 0 18px; }.b-region-details .b-transport { border:1px solid var(--line); border-radius:10px; padding:7px; margin-top:8px; }.b-region-extra { font-size:10px; color:var(--muted); line-height:1.5; padding:12px; background:#edf3ed; border-radius:8px; margin-top:8px; }
+
+/* ==========================================================================
+   Page Transitions & Hardware Acceleration (GPU Layers)
+   ========================================================================== */
+@keyframes b-page-fade {
+  from {
+    opacity: 0.15;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.b-page-container {
+  width: 100%;
+  min-height: calc(100vh - 64px);
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  animation: b-page-fade 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .b-page-container {
+    animation: none;
+  }
+}

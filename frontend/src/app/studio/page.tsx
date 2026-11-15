@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -14,9 +14,23 @@ import {
   Share2,
   SlidersHorizontal,
 } from "lucide-react";
-import { GeoMap } from "@/components/breathe/GeoMap";
+import dynamic from "next/dynamic";
+import { GlobeLoadingOverlay } from "@/components/breathe/GlobeLoadingOverlay";
+
+const GeoMap = dynamic(
+  () => import("@/components/breathe/GeoMap").then((mod) => mod.GeoMap),
+  {
+    ssr: false,
+    loading: () => (
+      <div style={{ position: "relative", width: "100%", height: "100%", minHeight: "555px" }}>
+        <GlobeLoadingOverlay visible={true} isLightBasemap={true} label="Loading territory map" />
+      </div>
+    ),
+  }
+);
 import {
   BasemapSwitcher,
+  CustomSelect,
   DataBadge,
   Legend,
   SiteFooter,
@@ -33,12 +47,24 @@ import {
 import { useBreathe } from "@/context/BreatheContext";
 import { useAudioClock } from "@/hooks/useSonification";
 import { getLayerDefinition, layers, timeSlots } from "@/lib/breatheData";
+import { prefetchOverlayFrame } from "@/lib/geosCfRaster";
 import { zoomForBounds } from "@/lib/geoUtils";
-import type { BreatheProjectFile } from "@/types/breathe";
+import type { BreatheProjectFile, GeoPoint } from "@/types/breathe";
 import type { OscillatorWaveform } from "@/types/audio";
 
 const MUSICAL_KEYS = ["A minor", "C major", "D minor", "G major", "E minor"];
 const WAVEFORMS: OscillatorWaveform[] = ["sine", "triangle", "sawtooth", "square"];
+
+function SynthesisTelemetry({ tempo, musicalKey }: { tempo: number; musicalKey: string }) {
+  const clock = useAudioClock();
+  return (
+    <strong>
+      {clock.playbackState === "playing"
+        ? `${clock.activeFrequencyHz.toFixed(1)} Hz · ${clock.currentStep + 1}/16`
+        : `${tempo} BPM · ${musicalKey}`}
+    </strong>
+  );
+}
 
 export default function StudioPage() {
   const {
@@ -66,7 +92,6 @@ export default function StudioPage() {
     buildCompositionSpec,
   } = useBreathe();
 
-  const clock = useAudioClock();
   const [vizTab, setVizTab] = useState<"waveform" | "spectrogram" | "rhythm" | "particles">("waveform");
   const [scanLocked, setScanLocked] = useState(false);
   const [timelinePlaying, setTimelinePlaying] = useState(false);
@@ -79,11 +104,27 @@ export default function StudioPage() {
 
   useEffect(() => {
     if (!timelinePlaying) return;
+    prefetchOverlayFrame(activeLayer, (timeIndex + 1) % timeSlots.length);
+  }, [timelinePlaying, activeLayer, timeIndex]);
+
+  useEffect(() => {
+    if (!timelinePlaying) return;
     const id = window.setInterval(() => {
       setTimeIndex((prev) => (prev + 1) % timeSlots.length);
     }, 1500);
     return () => window.clearInterval(id);
   }, [timelinePlaying, setTimeIndex]);
+
+  const handlePolygonChange = useCallback(
+    (pts: GeoPoint[]) => setPolygon(pts, "Edited Studio region", "custom"),
+    [setPolygon]
+  );
+
+  const handleStepSlot = useCallback(
+    (delta: number) =>
+      setTimeIndex((prev) => (prev + delta + timeSlots.length) % timeSlots.length),
+    [setTimeIndex]
+  );
 
   useEffect(() => {
     if (!notice) return;
@@ -274,7 +315,7 @@ export default function StudioPage() {
                 polygon={selection.polygon}
                 boundaryGeometry={selection.boundaryGeometry}
                 boundaryKind={selection.boundaryKind}
-                onPolygonChange={(pts) => setPolygon(pts, "Edited Studio region", "custom")}
+                onPolygonChange={handlePolygonChange}
                 onSelectTerritory={selectTerritory}
                 onScanLockChange={setScanLocked}
                 tool="select"
@@ -309,9 +350,7 @@ export default function StudioPage() {
             <AudioTransport
               title={`${selection.name} · ${layerDef.short}`}
               spec={compositionSpec}
-              onStepSlot={(delta) =>
-                setTimeIndex((prev) => (prev + delta + timeSlots.length) % timeSlots.length)
-              }
+              onStepSlot={handleStepSlot}
             />
 
             <div className="b-viz-tabs" role="tablist" aria-label="Sound visualization view">
@@ -353,11 +392,7 @@ export default function StudioPage() {
               </div>
               <div>
                 <span>Synthesis</span>
-                <strong>
-                  {clock.playbackState === "playing"
-                    ? `${clock.activeFrequencyHz.toFixed(1)} Hz · ${clock.currentStep + 1}/16`
-                    : `${mapping.tempo} BPM · ${mapping.musicalKey}`}
-                </strong>
+                <SynthesisTelemetry tempo={mapping.tempo} musicalKey={mapping.musicalKey} />
               </div>
             </div>
           </div>
@@ -463,37 +498,32 @@ export default function StudioPage() {
                 </div>
               </div>
 
-              <label>
-                KEY
-                <select
+              <div style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", color: "var(--muted)" }}>KEY</span>
+                <CustomSelect
                   value={mapping.musicalKey}
-                  onChange={(e) => updateMapping({ musicalKey: e.target.value })}
-                  aria-label="Musical scale key"
-                >
-                  {MUSICAL_KEYS.map((k) => (
-                    <option key={k} value={k}>
-                      {k}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  options={MUSICAL_KEYS.map((k) => ({ value: k, label: k }))}
+                  onChange={(val) => updateMapping({ musicalKey: val })}
+                  compact
+                  searchPlaceholder="Filter key..."
+                  ariaLabel="Musical scale key"
+                />
+              </div>
 
-              <label>
-                WAVEFORM
-                <select
+              <div style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", color: "var(--muted)" }}>WAVEFORM</span>
+                <CustomSelect
                   value={mapping.waveform}
-                  onChange={(e) =>
-                    updateMapping({ waveform: e.target.value as OscillatorWaveform })
-                  }
-                  aria-label="Oscillator waveform"
-                >
-                  {WAVEFORMS.map((wf) => (
-                    <option key={wf} value={wf}>
-                      {wf}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  options={WAVEFORMS.map((wf) => ({
+                    value: wf,
+                    label: wf.charAt(0).toUpperCase() + wf.slice(1),
+                  }))}
+                  onChange={(val) => updateMapping({ waveform: val as OscillatorWaveform })}
+                  compact
+                  searchable={false}
+                  ariaLabel="Oscillator waveform"
+                />
+              </div>
             </div>
           </div>
         </aside>

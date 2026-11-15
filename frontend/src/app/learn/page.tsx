@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -12,11 +12,13 @@ import {
   Volume2,
 } from "lucide-react";
 import { MapArtworkThumbnail } from "@/components/breathe/MapArtworkThumbnail";
-import { DataBadge, SiteFooter } from "@/components/breathe/SharedUI";
+import { CustomSelect, DataBadge, SiteFooter } from "@/components/breathe/SharedUI";
 import { AudioTransport, RhythmGrid, Waveform } from "@/components/breathe/SoundVisuals";
 import { useBreathe } from "@/context/BreatheContext";
 import { galleryWorks, observations } from "@/lib/breatheData";
-import type { AudioCompositionSpec } from "@/types/breathe";
+import { samplePointSeries } from "@/lib/geosCfRaster";
+import { sonificationService } from "@/services/sonificationService";
+import type { AudioCompositionSpec, SonificationMapping } from "@/types/breathe";
 
 interface ComparisonProfile {
   id: string;
@@ -27,7 +29,16 @@ interface ComparisonProfile {
   unit: string;
   badge: string;
   series: number[];
+  xLabels: readonly string[];
   isIllustrative: boolean;
+  coordinates?: { lat: number; lon: number };
+}
+
+const JULY_X_LABELS = ["Jul 1", "Jul 8", "Jul 15", "Jul 22", "Jul 31"] as const;
+const UTC_X_LABELS = ["00:30Z", "06:30Z", "12:30Z", "18:30Z", "21:30Z"] as const;
+
+function getStationFallbackSeries(value: number): number[] {
+  return Array.from({ length: 8 }, () => Number(value.toFixed(1)));
 }
 
 const COMPARISON_PROFILES: ComparisonProfile[] = [
@@ -40,6 +51,7 @@ const COMPARISON_PROFILES: ComparisonProfile[] = [
     unit: "µg/m³",
     badge: "Elevated",
     series: [62, 74, 86, 82, 58, 49, 68, 88, 94, 72, 60, 78],
+    xLabels: JULY_X_LABELS,
     isIllustrative: true,
   },
   {
@@ -51,31 +63,32 @@ const COMPARISON_PROFILES: ComparisonProfile[] = [
     unit: "µg/m³",
     badge: "Lower",
     series: [15, 19, 13, 11, 16, 20, 12, 10, 14, 18, 13, 15],
+    xLabels: JULY_X_LABELS,
     isIllustrative: true,
   },
   ...observations.map((obs) => ({
     id: obs.id,
     title: obs.coordinates.regionName,
-    subtitle: "NASA GEOS-CF v2 · 12 Nov 2026",
+    subtitle: `NASA GEOS-CF v2 · ${obs.timestamp.slice(11, 16)}Z (${obs.timestamp.slice(0, 10)})`,
     label: `${obs.coordinates.regionName} (NASA GEOS-CF v2)`,
     value: Number(obs.value.toFixed(1)),
     unit: obs.unit,
     badge: obs.value > 75 ? "Elevated" : obs.value > 35 ? "Moderate" : "Lower",
-    series: Array.from({ length: 12 }, (_, idx) =>
-      Number((obs.value * (0.82 + 0.24 * Math.sin(idx * 0.65))).toFixed(1))
-    ),
+    series: getStationFallbackSeries(obs.value),
+    xLabels: UTC_X_LABELS,
     isIllustrative: false,
+    coordinates: { lat: obs.coordinates.lat, lon: obs.coordinates.lon },
   })),
 ];
 
-function buildProfileSpec(profile: ComparisonProfile): AudioCompositionSpec {
+function buildProfileSpec(profile: ComparisonProfile, series: number[]): AudioCompositionSpec {
   const norm = Math.min(1, profile.value / 130);
   return {
     id: `learn-${profile.id}`,
     title: profile.title,
     regionName: profile.title,
     variable: "PM25_RH35",
-    series: profile.series,
+    series,
     min: 0,
     max: 140,
     mapping: {
@@ -92,20 +105,37 @@ function buildProfileSpec(profile: ComparisonProfile): AudioCompositionSpec {
   };
 }
 
-function MiniSeriesChart({ series, labelId }: { series: number[]; labelId: string }) {
+function MiniSeriesChart({
+  series,
+  labelId,
+  xLabels,
+}: {
+  series: number[];
+  labelId: string;
+  xLabels: readonly string[];
+}) {
+  const maxVal = series.length > 0 ? Math.max(...series) : 100;
+  const maxTick = Math.max(100, Math.ceil((maxVal * 1.15) / 25) * 25);
+  const midTick = Math.round(maxTick / 2);
+  const denom = Math.max(1, series.length - 1);
   const pts = series
-    .map((v, i) => `${(i / (series.length - 1)) * 280},${Math.max(8, 92 - (v / 110) * 78)}`)
+    .map((v, i) => {
+      const x = (i / denom) * 280;
+      const clamped = Math.max(0, Math.min(maxTick, v));
+      const y = 92 - (clamped / maxTick) * 80;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
     .join(" ");
   const gradId = `learn-grad-${labelId}`;
 
   return (
     <div className="b-learning-chart">
-      <div className="b-chart-grid" aria-hidden="true">
-        <span>100</span>
-        <span>50</span>
+      <div className="b-chart-grid b-tabular" aria-hidden="true">
+        <span>{maxTick}</span>
+        <span>{midTick}</span>
         <span>0</span>
       </div>
-      <svg viewBox="0 0 280 96" aria-hidden="true">
+      <svg viewBox="0 0 280 96" preserveAspectRatio="none" aria-hidden="true">
         <defs>
           <linearGradient id={gradId} x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stopColor="#23695f" stopOpacity="0.22" />
@@ -113,58 +143,74 @@ function MiniSeriesChart({ series, labelId }: { series: number[]; labelId: strin
           </linearGradient>
         </defs>
         <polygon points={`0,92 ${pts} 280,92`} fill={`url(#${gradId})`} />
-        <polyline points={pts} fill="none" stroke="#23695f" strokeWidth="2" strokeLinejoin="round" />
+        <polyline
+          points={pts}
+          fill="none"
+          stroke="#23695f"
+          strokeWidth="2"
+          strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
+        />
       </svg>
       <div className="b-chart-dates b-tabular">
-        <span>Jul 1</span>
-        <span>Jul 8</span>
-        <span>Jul 15</span>
-        <span>Jul 22</span>
-        <span>Jul 31</span>
+        {xLabels.map((lbl) => (
+          <span key={lbl}>{lbl}</span>
+        ))}
       </div>
     </div>
   );
 }
 
-export default function LearnPage() {
-  const router = useRouter();
-  const { updateMapping, loadWorkContext } = useBreathe();
+function useSampledStationSeries(
+  coordinates: { lat: number; lon: number } | undefined,
+  fallbackValue: number,
+  enabled: boolean
+): number[] {
+  const [sampled, setSampled] = useState<number[] | null>(null);
 
-  const [tab, setTab] = useState<"lessons" | "experiments" | "concepts">("lessons");
-  const [cityAId, setCityAId] = useState<string>("beijing-lesson");
-  const [cityBId, setCityBId] = useState<string>("vancouver-lesson");
-  const [activeAB, setActiveAB] = useState<"a" | "b">("a");
+  useEffect(() => {
+    setSampled(null);
+    if (!enabled || !coordinates) return;
+    let cancelled = false;
+    void samplePointSeries("PM25_RH35", coordinates.lat, coordinates.lon, fallbackValue).then(
+      (series) => {
+        if (!cancelled && series.length > 0) {
+          setSampled(series);
+        }
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, coordinates, fallbackValue]);
 
+  return sampled ?? getStationFallbackSeries(fallbackValue);
+}
+
+const ExperimentsSandbox = React.memo(function ExperimentsSandbox({
+  onApplyToStudio,
+}: {
+  onApplyToStudio: (patch: Partial<SonificationMapping>) => void;
+}) {
   const [expObsIdx, setExpObsIdx] = useState(0);
   const [expDensity, setExpDensity] = useState(0.68);
   const [expBrightness, setExpBrightness] = useState(0.54);
   const [expTempo, setExpTempo] = useState(96);
 
-  const [quizAnswer, setQuizAnswer] = useState<string | null>(null);
-
-  const cityA = COMPARISON_PROFILES.find((c) => c.id === cityAId) ?? COMPARISON_PROFILES[0];
-  const cityB = COMPARISON_PROFILES.find((c) => c.id === cityBId) ?? COMPARISON_PROFILES[1];
-
-  const specA = useMemo(() => buildProfileSpec(cityA), [cityA]);
-  const specB = useMemo(() => buildProfileSpec(cityB), [cityB]);
-
   const activeObs = observations[expObsIdx] ?? observations[0];
+  const sampledSeries = useSampledStationSeries(
+    activeObs.coordinates,
+    activeObs.value,
+    true
+  );
+
   const sandboxSpec = useMemo<AudioCompositionSpec>(
     () => ({
       id: `sandbox-${activeObs.id}`,
       title: `${activeObs.coordinates.regionName} Experiment`,
       regionName: activeObs.coordinates.regionName,
       variable: "PM25_RH35",
-      series: [
-        activeObs.value * 0.8,
-        activeObs.value * 0.92,
-        activeObs.value,
-        activeObs.value * 1.12,
-        activeObs.value * 1.04,
-        activeObs.value * 0.9,
-        activeObs.value * 0.85,
-        activeObs.value * 0.95,
-      ],
+      series: sampledSeries,
       min: 0,
       max: 140,
       mapping: {
@@ -179,8 +225,146 @@ export default function LearnPage() {
       },
       durationSec: 24,
     }),
-    [activeObs, expDensity, expBrightness, expTempo]
+    [activeObs, sampledSeries, expDensity, expBrightness, expTempo]
   );
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const state = sonificationService.getClockState();
+      if (
+        state.playbackState !== "playing" ||
+        !state.activeCompositionId ||
+        state.activeCompositionId.startsWith("sandbox-")
+      ) {
+        sonificationService.syncPreviewSpec(sandboxSpec);
+      }
+    }, 45);
+    return () => window.clearTimeout(timer);
+  }, [sandboxSpec]);
+
+  return (
+    <div className="b-container b-experiment">
+      <div>
+        <h2>Test mapping rules live</h2>
+        <p>
+          Pick a verified NASA GEOS-CF v2 station, dial how concentration governs pulse density
+          and filter timbre, then transfer the mapping into Studio.
+        </p>
+
+        <div className="b-field-label" style={{ display: "grid", gap: 6, marginTop: 22 }}>
+          <span>Station (NASA GEOS-CF v2)</span>
+          <CustomSelect
+            value={String(expObsIdx)}
+            options={observations.map((obs, idx) => ({
+              value: String(idx),
+              label: `${obs.coordinates.regionName} — ${obs.value.toFixed(1)} ${obs.unit}`,
+            }))}
+            onChange={(val) => setExpObsIdx(Number(val))}
+            searchPlaceholder="Search station or region..."
+            ariaLabel="Station (NASA GEOS-CF v2)"
+          />
+        </div>
+
+        <label>
+          <span>Rhythm density</span>
+          <strong className="b-tabular">{Math.round(expDensity * 100)}%</strong>
+        </label>
+        <input
+          type="range"
+          min={0.1}
+          max={1}
+          step={0.02}
+          value={expDensity}
+          onChange={(e) => setExpDensity(Number(e.target.value))}
+        />
+
+        <label>
+          <span>Timbre brightness</span>
+          <strong className="b-tabular">{Math.round(expBrightness * 100)}%</strong>
+        </label>
+        <input
+          type="range"
+          min={0.1}
+          max={1}
+          step={0.02}
+          value={expBrightness}
+          onChange={(e) => setExpBrightness(Number(e.target.value))}
+        />
+
+        <label>
+          <span>Tempo</span>
+          <strong className="b-tabular">{expTempo} BPM</strong>
+        </label>
+        <input
+          type="range"
+          min={60}
+          max={152}
+          step={2}
+          value={expTempo}
+          onChange={(e) => setExpTempo(Number(e.target.value))}
+        />
+
+        <button
+          type="button"
+          className="b-button b-button-primary"
+          style={{ marginTop: 22 }}
+          onClick={() =>
+            onApplyToStudio({
+              density: expDensity,
+              brightness: expBrightness,
+              tempo: expTempo,
+            })
+          }
+        >
+          <span>Apply mapping in Studio</span>
+          <ArrowRight size={14} />
+        </button>
+      </div>
+
+      <div className="b-sound-panel">
+        <h2>{activeObs.coordinates.regionName}</h2>
+        <p className="b-muted b-tabular" style={{ marginBottom: 12 }}>
+          Surface PM2.5: {activeObs.value.toFixed(1)} {activeObs.unit}
+        </p>
+        <AudioTransport title={`${activeObs.coordinates.regionName} sandbox`} spec={sandboxSpec} />
+        <Waveform spec={sandboxSpec} />
+        <div style={{ marginTop: 12 }}>
+          <RhythmGrid rows={["PM2.5", "Timbre", "ΔRate"]} spec={sandboxSpec} />
+        </div>
+      </div>
+    </div>
+  );
+});
+
+export default function LearnPage() {
+  const router = useRouter();
+  const { updateMapping, loadWorkContext } = useBreathe();
+
+  const [tab, setTab] = useState<"lessons" | "experiments" | "concepts">("lessons");
+  const [cityAId, setCityAId] = useState<string>("beijing-lesson");
+  const [cityBId, setCityBId] = useState<string>("vancouver-lesson");
+  const [activeAB, setActiveAB] = useState<"a" | "b">("a");
+  const [quizAnswer, setQuizAnswer] = useState<string | null>(null);
+
+  const cityA = COMPARISON_PROFILES.find((c) => c.id === cityAId) ?? COMPARISON_PROFILES[0];
+  const cityB = COMPARISON_PROFILES.find((c) => c.id === cityBId) ?? COMPARISON_PROFILES[1];
+
+  const sampledCityASeries = useSampledStationSeries(
+    cityA.coordinates,
+    cityA.value,
+    tab === "lessons" && !cityA.isIllustrative
+  );
+  const sampledCityBSeries = useSampledStationSeries(
+    cityB.coordinates,
+    cityB.value,
+    tab === "lessons" && !cityB.isIllustrative
+  );
+
+  const cityASeries = cityA.isIllustrative ? cityA.series : sampledCityASeries;
+  const cityBSeries = cityB.isIllustrative ? cityB.series : sampledCityBSeries;
+
+  const specA = useMemo(() => buildProfileSpec(cityA, cityASeries), [cityA, cityASeries]);
+  const specB = useMemo(() => buildProfileSpec(cityB, cityBSeries), [cityB, cityBSeries]);
 
   const mysterySpec = useMemo<AudioCompositionSpec>(
     () => ({
@@ -206,14 +390,13 @@ export default function LearnPage() {
     []
   );
 
-  const sendSandboxToStudio = () => {
-    updateMapping({
-      density: expDensity,
-      brightness: expBrightness,
-      tempo: expTempo,
-    });
-    router.push("/studio");
-  };
+  const applySandboxToStudio = React.useCallback(
+    (patch: Partial<SonificationMapping>) => {
+      updateMapping(patch);
+      router.push("/studio");
+    },
+    [updateMapping, router]
+  );
 
   return (
     <div className="b-page">
@@ -258,27 +441,35 @@ export default function LearnPage() {
             </div>
 
             <div className="b-compare-selectors">
-              <label>
-                Region A
-                <select value={cityAId} onChange={(e) => setCityAId(e.target.value)}>
-                  {COMPARISON_PROFILES.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div style={{ flex: 1, minWidth: 160 }}>
+                <span style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--muted)", marginBottom: 4 }}>Region A</span>
+                <CustomSelect
+                  value={cityAId}
+                  options={COMPARISON_PROFILES.map((p) => ({
+                    value: p.id,
+                    label: p.label,
+                  }))}
+                  onChange={setCityAId}
+                  compact
+                  searchPlaceholder="Search region A..."
+                  ariaLabel="Select Region A"
+                />
+              </div>
 
-              <label>
-                Region B
-                <select value={cityBId} onChange={(e) => setCityBId(e.target.value)}>
-                  {COMPARISON_PROFILES.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div style={{ flex: 1, minWidth: 160 }}>
+                <span style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--muted)", marginBottom: 4 }}>Region B</span>
+                <CustomSelect
+                  value={cityBId}
+                  options={COMPARISON_PROFILES.map((p) => ({
+                    value: p.id,
+                    label: p.label,
+                  }))}
+                  onChange={setCityBId}
+                  compact
+                  searchPlaceholder="Search region B..."
+                  ariaLabel="Select Region B"
+                />
+              </div>
             </div>
 
             <div className="b-city-list">
@@ -292,7 +483,11 @@ export default function LearnPage() {
                   </strong>
                   <em className={cityA.value < 35 ? "is-good" : undefined}>{cityA.badge}</em>
                 </div>
-                <MiniSeriesChart series={cityA.series} labelId={`a-${cityA.id}`} />
+                <MiniSeriesChart
+                  series={cityASeries}
+                  labelId={`a-${cityA.id}`}
+                  xLabels={cityA.xLabels}
+                />
               </div>
 
               <div className="b-city-row">
@@ -305,7 +500,11 @@ export default function LearnPage() {
                   </strong>
                   <em className={cityB.value < 35 ? "is-good" : undefined}>{cityB.badge}</em>
                 </div>
-                <MiniSeriesChart series={cityB.series} labelId={`b-${cityB.id}`} />
+                <MiniSeriesChart
+                  series={cityBSeries}
+                  labelId={`b-${cityB.id}`}
+                  xLabels={cityB.xLabels}
+                />
               </div>
             </div>
 
@@ -383,91 +582,7 @@ export default function LearnPage() {
       )}
 
       {tab === "experiments" && (
-        <div className="b-container b-experiment">
-          <div>
-            <h2>Test mapping rules live</h2>
-            <p>
-              Pick a verified NASA GEOS-CF v2 station, dial how concentration governs pulse density
-              and filter timbre, then transfer the mapping into Studio.
-            </p>
-
-            <label className="b-field-label" style={{ display: "grid", gap: 6, marginTop: 22 }}>
-              <span>Station (NASA GEOS-CF v2)</span>
-              <select
-                className="b-text-input"
-                value={expObsIdx}
-                onChange={(e) => setExpObsIdx(Number(e.target.value))}
-              >
-                {observations.map((obs, idx) => (
-                  <option key={obs.id} value={idx}>
-                    {obs.coordinates.regionName} — {obs.value.toFixed(1)} {obs.unit}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label>
-              <span>Rhythm density</span>
-              <strong className="b-tabular">{Math.round(expDensity * 100)}%</strong>
-            </label>
-            <input
-              type="range"
-              min={0.1}
-              max={1}
-              step={0.02}
-              value={expDensity}
-              onChange={(e) => setExpDensity(Number(e.target.value))}
-            />
-
-            <label>
-              <span>Timbre brightness</span>
-              <strong className="b-tabular">{Math.round(expBrightness * 100)}%</strong>
-            </label>
-            <input
-              type="range"
-              min={0.1}
-              max={1}
-              step={0.02}
-              value={expBrightness}
-              onChange={(e) => setExpBrightness(Number(e.target.value))}
-            />
-
-            <label>
-              <span>Tempo</span>
-              <strong className="b-tabular">{expTempo} BPM</strong>
-            </label>
-            <input
-              type="range"
-              min={60}
-              max={152}
-              step={2}
-              value={expTempo}
-              onChange={(e) => setExpTempo(Number(e.target.value))}
-            />
-
-            <button
-              type="button"
-              className="b-button b-button-primary"
-              style={{ marginTop: 22 }}
-              onClick={sendSandboxToStudio}
-            >
-              <span>Apply mapping in Studio</span>
-              <ArrowRight size={14} />
-            </button>
-          </div>
-
-          <div className="b-sound-panel">
-            <h2>{activeObs.coordinates.regionName}</h2>
-            <p className="b-muted b-tabular" style={{ marginBottom: 12 }}>
-              Surface PM2.5: {activeObs.value.toFixed(1)} {activeObs.unit}
-            </p>
-            <AudioTransport title={`${activeObs.coordinates.regionName} sandbox`} spec={sandboxSpec} />
-            <Waveform spec={sandboxSpec} />
-            <div style={{ marginTop: 12 }}>
-              <RhythmGrid rows={["PM2.5", "Timbre", "ΔRate"]} spec={sandboxSpec} />
-            </div>
-          </div>
-        </div>
+        <ExperimentsSandbox onApplyToStudio={applySandboxToStudio} />
       )}
 
       {tab === "concepts" && (
@@ -547,6 +662,8 @@ export default function LearnPage() {
                 center={work.center}
                 zoom={work.zoom}
                 polygon={work.polygon}
+                boundaryGeometry={work.boundaryGeometry}
+                territoryCode={work.territoryCode}
                 variable={work.variable}
                 timeIndex={work.timeIndex}
                 seriesPreview={work.seriesPreview}
