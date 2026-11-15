@@ -435,6 +435,35 @@ describe("Frontend Region API Contract & Raster Decode Tests", () => {
       assert.ok(midValRight > 0.4 && midValRight < 1.0, `Expected smoothed transition, got ${midValRight}`);
     });
 
+    it("smoothDisplayNorms infills isolated inland no-data holes without leaking into ocean boundaries", () => {
+      const { smoothDisplayNorms } = require("../src/lib/geosCfRaster");
+      const width = 10;
+      const height = 10;
+      const norms = new Float32Array(width * height);
+      norms.fill(0.7);
+
+      // Create an inland hole of 2x2 at (4,4)..(5,5)
+      norms[4 * width + 4] = -1;
+      norms[4 * width + 5] = -1;
+      norms[5 * width + 4] = -1;
+      norms[5 * width + 5] = -1;
+
+      // Create ocean boundary on row 0 and 1
+      for (let x = 0; x < width; x += 1) {
+        norms[0 * width + x] = -1;
+        norms[1 * width + x] = -1;
+      }
+
+      const processed = smoothDisplayNorms(norms, width, height);
+
+      // Verify inland hole is fully infilled
+      assert.ok(processed[4 * width + 4] > 0.5, "Inland hole pixel (4,4) must be infilled");
+      assert.ok(processed[5 * width + 5] > 0.5, "Inland hole pixel (5,5) must be infilled");
+
+      // Verify deep ocean row 0 remains masked (-1)
+      assert.equal(processed[0 * width + 4], -1, "Deep ocean row must remain masked");
+    });
+
     it("verifies worker script instantiation includes cache buster version query", () => {
       const geosPath = path.resolve(__dirname, "../src/lib/geosCfRaster.ts");
       const content = fs.readFileSync(geosPath, "utf-8");
