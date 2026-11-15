@@ -91,29 +91,8 @@ az containerapp env create \
     --output table
 
 # 5b. Provision Azure File Share & bind ReadOnly catalog storage to Container Apps Environment
-if [ -z "${STORAGE_ACCOUNT}" ]; then
-    STORAGE_ACCOUNT=$(az storage account list --resource-group "${RESOURCE_GROUP}" --query "[?starts_with(name, 'stbreathe')].name | [0]" -o tsv 2>/dev/null || echo "")
-fi
-if [ -z "${STORAGE_ACCOUNT}" ]; then
-    STORAGE_ACCOUNT="stbreathe$(printf '%s' "${RESOURCE_GROUP}" | sha256sum | cut -c1-12)"
-    echo "Creating Azure Storage Account (${STORAGE_ACCOUNT}) in ${LOCATION}..."
-    az storage account create \
-        --name "${STORAGE_ACCOUNT}" \
-        --resource-group "${RESOURCE_GROUP}" \
-        --location "${LOCATION}" \
-        --sku Standard_LRS \
-        --kind StorageV2 \
-        --min-tls-version TLS1_2 \
-        --allow-blob-public-access false \
-        --output table
-fi
+STORAGE_ACCOUNT=$(AZURE_STORAGE_ACCOUNT="${STORAGE_ACCOUNT}" bash "$(dirname "$0")/ensure-azure-catalog-storage.sh" "${RESOURCE_GROUP}" "${LOCATION}" "${CATALOG_SHARE_NAME}")
 STORAGE_KEY=$(az storage account keys list --account-name "${STORAGE_ACCOUNT}" --resource-group "${RESOURCE_GROUP}" --query "[0].value" -o tsv)
-az storage share create \
-    --name "${CATALOG_SHARE_NAME}" \
-    --account-name "${STORAGE_ACCOUNT}" \
-    --account-key "${STORAGE_KEY}" \
-    --quota 10 \
-    --output none
 az containerapp env storage set \
     --name "${ENVIRONMENT_NAME}" \
     --resource-group "${RESOURCE_GROUP}" \

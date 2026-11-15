@@ -104,34 +104,8 @@ jobs:
             ENV_LOCATION=$(az group show --name "${RESOURCE_GROUP}" --query location -o tsv 2>/dev/null || echo "eastasia")
           fi
 
-          STORAGE_ACCOUNT="${AZURE_STORAGE_ACCOUNT}"
-          if [ -z "${STORAGE_ACCOUNT}" ]; then
-            STORAGE_ACCOUNT=$(az storage account list --resource-group "${RESOURCE_GROUP}" --query "[?starts_with(name, 'stbreathe')].name | [0]" -o tsv 2>/dev/null || echo "")
-          fi
-          if [ -z "${STORAGE_ACCOUNT}" ]; then
-            STORAGE_ACCOUNT=$(az storage account list --resource-group "${RESOURCE_GROUP}" --query "[0].name" -o tsv 2>/dev/null || echo "")
-          fi
-          if [ -z "${STORAGE_ACCOUNT}" ]; then
-            STORAGE_ACCOUNT="stbreathe$(printf '%s' "${RESOURCE_GROUP}" | sha256sum | cut -c1-12)"
-            echo "Creating Azure Storage Account (${STORAGE_ACCOUNT}) in ${ENV_LOCATION}..."
-            az storage account create \
-              --name "${STORAGE_ACCOUNT}" \
-              --resource-group "${RESOURCE_GROUP}" \
-              --location "${ENV_LOCATION}" \
-              --sku Standard_LRS \
-              --kind StorageV2 \
-              --min-tls-version TLS1_2 \
-              --allow-blob-public-access false \
-              --output table
-          fi
-
+          STORAGE_ACCOUNT=$(bash ./scripts/ensure-azure-catalog-storage.sh "${RESOURCE_GROUP}" "${ENV_LOCATION}" "${CATALOG_SHARE_NAME}")
           STORAGE_KEY=$(az storage account keys list --account-name "${STORAGE_ACCOUNT}" --resource-group "${RESOURCE_GROUP}" --query "[0].value" -o tsv)
-          az storage share create \
-            --name "${CATALOG_SHARE_NAME}" \
-            --account-name "${STORAGE_ACCOUNT}" \
-            --account-key "${STORAGE_KEY}" \
-            --quota 10 \
-            --output none
 
           # 1. Upload every verified snapshot directory before updating index.json
           for dir in /tmp/geos-cf-catalog/*/; do
