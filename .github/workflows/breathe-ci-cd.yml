@@ -38,6 +38,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test:demo
+      - run: npm run test:contracts
 
   backend-ci:
     name: Backend Test Suite (FastAPI & Pytest)
@@ -53,6 +54,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Set up Node for Python/browser numeric parity tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Install System C-Libraries for NetCDF4 & HDF5
         run: |

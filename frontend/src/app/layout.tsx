@@ -7,6 +7,7 @@ import "./responsive.css";
 import "./redesign.css";
 import "./landing.css";
 import { BreatheProvider } from "@/context/BreatheContext";
+import { ScientificSessionProvider } from "@/context/ScientificSessionContext";
 import { SiteHeader } from "@/components/breathe/SharedUI";
 
 export const metadata: Metadata = {
@@ -20,8 +21,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <BreatheProvider>
+          <ScientificSessionProvider>
           <SiteHeader />
           <main>{children}</main>
+          </ScientificSessionProvider>
         </BreatheProvider>
       </body>
     </html>

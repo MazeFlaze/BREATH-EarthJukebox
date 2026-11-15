@@ -34,6 +34,7 @@ export function prepareDetail(values, geometry, options) {
   const [r0, r1, c0, c1] = crop;
   if (!crop.every(Number.isInteger) || r0 < 0 || r1 > sourceRows || c0 < 0 || c1 > sourceCols || r0 >= r1 || c0 >= c1) throw Error('Invalid native crop');
   if (!['horizontal', 'vertical'].includes(options.axis) || !['focus', 'spectral'].includes(options.profile)) throw Error('Unknown detail mode');
+  if (options.temporalSummary && options.profile !== 'focus') throw Error('Temporal summaries require Focus features');
   if (![45, 22.5, 11.25, 5, 1, 'native'].includes(options.resolution)) throw Error('Unknown grid resolution');
   if (![8, 16].includes(options.bands) || !(options.audioMax > 0)) throw Error('Invalid feature mapping');
   const stride = options.resolution === 'native' ? 1 : Math.round(options.resolution / geometry.lon_step);
@@ -53,7 +54,7 @@ export function prepareDetail(values, geometry, options) {
     totals[index] = (rb.end - rb.start) * (cb.end - cb.start); validCounts[index] = count;
     included += totals[index]; validTotal += count;
   }
-  const horizontal = options.axis === 'horizontal', steps = horizontal ? cols : rows;
+  const horizontal = options.axis === 'horizontal', steps = options.temporalSummary ? 1 : horizontal ? cols : rows;
   const perpendicular = horizontal ? rows : cols;
   const lanes = options.profile === 'spectral' ? perpendicular : Math.min(options.bands, perpendicular);
   const mean = new Float32Array(steps * lanes), p90 = new Float32Array(mean.length), spread = new Float32Array(mean.length);
@@ -66,8 +67,8 @@ export function prepareDetail(values, geometry, options) {
       mean[index] = grid[cell]; coverage[index] = validCounts[cell] / totals[cell]; p90[index] = NaN;
       continue;
     }
-    const rb = horizontal ? { start: rowBins[group.start].start, end: rowBins[group.end - 1].end } : rowBins[step];
-    const cb = horizontal ? colBins[step] : { start: colBins[group.start].start, end: colBins[group.end - 1].end };
+    const rb = horizontal ? { start: rowBins[group.start].start, end: rowBins[group.end - 1].end } : options.temporalSummary ? { start: r0, end: r1 } : rowBins[step];
+    const cb = horizontal ? options.temporalSummary ? { start: c0, end: c1 } : colBins[step] : { start: colBins[group.start].start, end: colBins[group.end - 1].end };
     const distribution = [];
     let numerator = 0, denominator = 0;
     for (let rr = rb.start; rr < rb.end; rr++) for (let cc = cb.start; cc < cb.end; cc++) {
@@ -93,7 +94,7 @@ export function prepareDetail(values, geometry, options) {
     const latitude = (bins[group.start].high + bins[group.end - 1].low) / 2;
     return horizontal ? (latitude + 90) / 180 : (center + 180) / 360;
   });
-  const stepPositions = Float32Array.from(horizontal ? colBins : rowBins, bin => horizontal ? ((bin.low + bin.high) / 2 + 180) / 360 : ((bin.low + bin.high) / 2 + 90) / 180);
+  const stepPositions = options.temporalSummary ? Float32Array.of(.5) : Float32Array.from(horizontal ? colBins : rowBins, bin => horizontal ? ((bin.low + bin.high) / 2 + 180) / 360 : ((bin.low + bin.high) / 2 + 90) / 180);
   return { mappingVersion: DETAIL_MAPPING, rows, cols, rowBins, colBins, grid, validCounts, totals, included, validTotal,
     frames: { steps, lanes, mean, p90, spread, coverage, contrast, laneBins, positions, stepPositions, profile: options.profile, axis: options.axis, audioMax: options.audioMax } };
 }

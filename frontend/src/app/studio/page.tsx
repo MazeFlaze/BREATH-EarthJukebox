@@ -45,6 +45,8 @@ import {
   Waveform,
 } from "@/components/breathe/SoundVisuals";
 import { useBreathe } from "@/context/BreatheContext";
+import { useScientificSession } from "@/context/ScientificSessionContext";
+import { ScientificEntry, ScientificWorkspace } from "@/components/scientific/ScientificWorkspace";
 import { useAudioClock } from "@/hooks/useSonification";
 import { getLayerDefinition, layers, timeSlots } from "@/lib/breatheData";
 import { prefetchOverlayFrame } from "@/lib/geosCfRaster";
@@ -67,6 +69,7 @@ function SynthesisTelemetry({ tempo, musicalKey }: { tempo: number; musicalKey: 
 }
 
 export default function StudioPage() {
+  const scientific = useScientificSession();
   const {
     selection,
     territories,
@@ -103,17 +106,17 @@ export default function StudioPage() {
   const fittedZoom = useMemo(() => zoomForBounds(selection.bounds), [selection.bounds]);
 
   useEffect(() => {
-    if (!timelinePlaying) return;
+    if (!timelinePlaying || scientific.enabled) return;
     prefetchOverlayFrame(activeLayer, (timeIndex + 1) % timeSlots.length);
-  }, [timelinePlaying, activeLayer, timeIndex]);
+  }, [timelinePlaying, activeLayer, timeIndex, scientific.enabled]);
 
   useEffect(() => {
-    if (!timelinePlaying) return;
+    if (!timelinePlaying || scientific.enabled) return;
     const id = window.setInterval(() => {
       setTimeIndex((prev) => (prev + 1) % timeSlots.length);
     }, 1500);
     return () => window.clearInterval(id);
-  }, [timelinePlaying, setTimeIndex]);
+  }, [timelinePlaying, setTimeIndex, scientific.enabled]);
 
   const handlePolygonChange = useCallback(
     (pts: GeoPoint[]) => setPolygon(pts, "Edited Studio region", "custom"),
@@ -181,8 +184,10 @@ export default function StudioPage() {
     }
   };
 
+  if (scientific.enabled) return <ScientificWorkspace variant="studio" />;
   return (
     <div className="b-page">
+      <ScientificEntry />
       <div className="b-container b-studio-intro b-workspace-intro">
         <div>
           <h1>Sonification Studio</h1>

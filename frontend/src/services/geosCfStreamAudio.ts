@@ -11,12 +11,13 @@ export class GeosCfStreamAudio {
   private disposed = false;
   state: DemoState = 'ready';
   constructor(private tick: (tick: DetailTick) => void, private stateChanged: (state: DemoState) => void,
-    private error: (error: string) => void, private completed?: () => void) {}
+    private error: (error: string) => void, private completed?: () => void,
+    private sharedContext?: () => AudioContext) {}
   private report(state: DemoState) { this.state = state; this.stateChanged(state); }
-  async play(frames: DetailFrames, duration: number, controls: DetailControls, startStep = 0, previewSeconds?: number) {
+  async play(frames: DetailFrames, duration: number, controls: DetailControls, startStep = 0, previewSeconds?: number, horizonSeconds?: number) {
     if (this.disposed) return;
     this.stop(); const token = this.generation;
-    if (!this.context) this.context = new AudioContext();
+    if (!this.context) this.context = this.sharedContext ? this.sharedContext() : new AudioContext();
     const context = this.context;
     const unlocked = context.resume();
     this.module ??= context.audioWorklet.addModule('/audio/geos-cf-stream.worklet.mjs').catch(cause => { this.module = null; throw cause; });
@@ -30,6 +31,7 @@ export class GeosCfStreamAudio {
       if (data.type === 'ready') {
         node.port.postMessage({ type: 'seek', step: startStep });
         if (previewSeconds) node.port.postMessage({ type: 'limit', seconds: previewSeconds });
+        if (horizonSeconds !== undefined) node.port.postMessage({ type: 'horizon', seconds: horizonSeconds });
         node.port.postMessage({ type: 'playing', value: true }); this.report('playing');
       } else if (data.type === 'error') { this.stop(); this.error(data.error); }
       else if (data.type === 'tick') {
@@ -44,6 +46,7 @@ export class GeosCfStreamAudio {
   }
   controls(controls: Partial<DetailControls>) { this.node?.port.postMessage({ type: 'controls', controls }); }
   seek(step: number) { this.node?.port.postMessage({ type: 'seek', step }); }
+  horizon(seconds: number) { this.node?.port.postMessage({ type: 'horizon', seconds }); }
   pause() {
     if (this.state !== 'playing' || !this.node || !this.context) return;
     const node = this.node, token = this.generation;
@@ -67,5 +70,5 @@ export class GeosCfStreamAudio {
     }
     this.report('ready');
   }
-  dispose() { this.stop(); this.disposed = true; if (this.context) void this.context.close(); this.context = null; }
+  dispose() { this.stop(); this.disposed = true; if (this.context && !this.sharedContext) void this.context.close(); this.context = null; }
 }
