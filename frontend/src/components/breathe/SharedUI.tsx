@@ -488,7 +488,7 @@ export const CustomSelect = memo(function CustomSelect({
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         disabled={disabled}
-        title={title}
+        title={title || (selectedOption ? selectedOption.label : undefined)}
         onClick={() => {
           if (!disabled) setIsOpen((prev) => !prev);
         }}
@@ -728,7 +728,7 @@ export const TerritorySelect = memo(function TerritorySelect({
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         disabled={disabled}
-        title={title}
+        title={title || activeLabel || undefined}
         onClick={() => {
           if (!disabled) setIsOpen((prev) => !prev);
         }}
