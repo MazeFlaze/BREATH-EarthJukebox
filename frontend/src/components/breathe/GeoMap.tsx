@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -8,7 +8,11 @@ import { Plus, Minus, Compass, Maximize2, Check, X } from "lucide-react";
 import { GlobeLoadingOverlay } from "@/components/breathe/GlobeLoadingOverlay";
 import { MapScanOverlay } from "@/components/breathe/MapScanOverlay";
 import { getLayerDefinition, observations } from "@/lib/breatheData";
-import { registerBreatheMapProtocol } from "@/lib/geosCfRaster";
+import {
+  isBaseSatelliteWarmed,
+  preloadBaseSatelliteAssets,
+  registerBreatheMapProtocol,
+} from "@/lib/geosCfRaster";
 import { syncMapViewportLock } from "@/lib/mapInteractionLock";
 import {
   clampLat,
@@ -252,7 +256,7 @@ function prefersReducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 }
 
-export function GeoMap({
+export const GeoMap = memo(function GeoMap({
   mode = "globe",
   basemapMode = "territories",
   layer,
@@ -286,11 +290,15 @@ export function GeoMap({
 
   const [mapReady, setMapReady] = useState(false);
   const [globeVisualReady, setGlobeVisualReady] = useState(false);
+  const [satelliteLoading, setSatelliteLoading] = useState(
+    () => (BASEMAP_THEMES[basemapMode]?.satelliteOpacity ?? 0) > 0 && !isBaseSatelliteWarmed()
+  );
   const [webglFallback, setWebglFallback] = useState(false);
   const [viewTick, setViewTick] = useState(0);
   const [containerSize, setContainerSize] = useState({ width: 800, height: 520 });
   const [hoveredCountryName, setHoveredCountryName] = useState<string | null>(null);
   const [scanActive, setScanActive] = useState(false);
+  const prevOverlaySourceRef = useRef<string>(`${layer}/${timeIndex}`);
 
   const isScanLocked = mode === "flat" && !compact && scanActive;
   const isScanLockedRef = useRef(isScanLocked);
@@ -552,6 +560,10 @@ export function GeoMap({
               id: "earth-base-layer",
               type: "raster",
               source: "earth-base",
+              layout: {
+                visibility:
+                  theme.satelliteOpacity > 0 && isBaseSatelliteWarmed() ? "visible" : "none",
+              },
               paint: {
                 "raster-opacity": theme.satelliteOpacity,
                 "raster-fade-duration": 100,
@@ -650,6 +662,9 @@ export function GeoMap({
               id: "geos-overlay-layer",
               type: "raster",
               source: "geos-overlay",
+              layout: {
+                visibility: layerVisible && layerDef.available ? "visible" : "none",
+              },
               paint: {
                 "raster-opacity": initialOverlayOpacity,
                 "raster-resampling": "linear",
@@ -1231,19 +1246,51 @@ export function GeoMap({
     return runWhenStyleReady(map, syncSelectedBoundary);
   }, [boundaryGeometry, mapReady, runWhenStyleReady]);
 
-  // Sync BasemapMode palette smoothly without destroying map state
+  // Sync BasemapMode palette smoothly without destroying map state;
+  // lazily load NASA Satellite rasters async via GlobeLoadingOverlay on first switch
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
+    let cancelled = false;
+    let cancelIdleWait: (() => void) | null = null;
+    const activeTheme = BASEMAP_THEMES[basemapMode] ?? BASEMAP_THEMES.territories;
+    const needsFirstSatelliteLoad = activeTheme.satelliteOpacity > 0 && !isBaseSatelliteWarmed();
+    if (needsFirstSatelliteLoad) {
+      setSatelliteLoading(true);
+    } else {
+      setSatelliteLoading(false);
+    }
+
+    const waitForSatelliteIdle = () =>
+      new Promise<void>((resolve) => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          window.clearTimeout(timer);
+          map.off("idle", finish);
+          cancelIdleWait = null;
+          resolve();
+        };
+        const timer = window.setTimeout(finish, 2400);
+        cancelIdleWait = finish;
+        map.once("idle", finish);
+      });
+
     const applyTheme = () => {
       try {
-        const activeTheme = BASEMAP_THEMES[basemapMode] ?? BASEMAP_THEMES.territories;
         if (map.getLayer("ocean-bg")) {
           map.setPaintProperty("ocean-bg", "background-color", activeTheme.ocean);
         }
         if (map.getLayer("earth-base-layer")) {
-          map.setPaintProperty("earth-base-layer", "raster-opacity", activeTheme.satelliteOpacity);
+          if (activeTheme.satelliteOpacity > 0 && isBaseSatelliteWarmed()) {
+            map.setLayoutProperty("earth-base-layer", "visibility", "visible");
+            map.setPaintProperty("earth-base-layer", "raster-opacity", activeTheme.satelliteOpacity);
+          } else {
+            map.setLayoutProperty("earth-base-layer", "visibility", "none");
+            map.setPaintProperty("earth-base-layer", "raster-opacity", 0);
+          }
         }
         for (const fillLayerId of ["countries-110m-fill", "countries-fill"] as const) {
           if (!map.getLayer(fillLayerId)) continue;
@@ -1311,12 +1358,35 @@ export function GeoMap({
           "sky-horizon-blend": mode === "globe" ? 0.9 : 0,
           "atmosphere-blend": mode === "globe" ? 0.34 : 0,
         });
+
+        if (needsFirstSatelliteLoad) {
+          void (async () => {
+            await preloadBaseSatelliteAssets();
+            if (cancelled) return;
+            if (map.getLayer("earth-base-layer")) {
+              map.setLayoutProperty("earth-base-layer", "visibility", "visible");
+              map.setPaintProperty("earth-base-layer", "raster-opacity", activeTheme.satelliteOpacity);
+            }
+            await waitForSatelliteIdle();
+            if (!cancelled) {
+              setSatelliteLoading(false);
+            }
+          })();
+        }
       } catch (err) {
+        if (needsFirstSatelliteLoad && !cancelled) {
+          setSatelliteLoading(false);
+        }
         console.warn("BREATHE basemap theme update skipped:", err);
       }
     };
 
-    return runWhenStyleReady(map, applyTheme);
+    const cancelStyleWait = runWhenStyleReady(map, applyTheme);
+    return () => {
+      cancelled = true;
+      cancelStyleWait();
+      cancelIdleWait?.();
+    };
   }, [basemapMode, mode, showGrid, showLabels, runWhenStyleReady]);
 
   // Keep flat minZoom synchronized dynamically when viewport resizes
@@ -1438,25 +1508,43 @@ export function GeoMap({
     });
   }, [center, zoom, mode, compact]);
 
-  // Synchronize GEOS-CF raster overlay tiles + opacity without map remount
+  // Synchronize GEOS-CF raster tile URLs ONLY when variable or time slot actually changes
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    const syncLayers = () => {
+    const nextKey = `${layer}/${timeIndex}`;
+    if (prevOverlaySourceRef.current === nextKey) return;
+    prevOverlaySourceRef.current = nextKey;
+
+    const syncOverlaySource = () => {
       const layerDef = getLayerDefinition(layer);
       const source = map.getSource("geos-overlay") as maplibregl.RasterTileSource | undefined;
       if (source && typeof source.setTiles === "function" && layerDef.available) {
         source.setTiles([`breathe-earth://overlay/${layer}/${timeIndex}/{z}/{x}/{y}`]);
       }
+    };
+
+    return runWhenStyleReady(map, syncOverlaySource);
+  }, [layer, timeIndex, runWhenStyleReady]);
+
+  // Synchronize GEOS-CF raster overlay visibility + opacity cleanly without reloading tiles
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const syncOverlayPaint = () => {
+      const layerDef = getLayerDefinition(layer);
+      const isVisible = layerVisible && layerDef.available;
       if (map.getLayer("geos-overlay-layer")) {
-        const opacity = layerVisible && layerDef.available ? Math.max(0, Math.min(1, layerOpacity)) : 0;
+        map.setLayoutProperty("geos-overlay-layer", "visibility", isVisible ? "visible" : "none");
+        const opacity = isVisible ? Math.max(0, Math.min(1, layerOpacity)) : 0;
         map.setPaintProperty("geos-overlay-layer", "raster-opacity", opacity);
       }
     };
 
-    return runWhenStyleReady(map, syncLayers);
-  }, [layer, timeIndex, layerVisible, layerOpacity, runWhenStyleReady]);
+    return runWhenStyleReady(map, syncOverlayPaint);
+  }, [layer, layerVisible, layerOpacity, runWhenStyleReady]);
 
   // Lock all map panning/zooming/rotation/keyboard gestures during 2D scan; otherwise keep scroll zoom active
   useEffect(() => {
@@ -1772,9 +1860,15 @@ export function GeoMap({
       <div ref={mapCanvasHostRef} className="b-maplibre-host" />
 
       <GlobeLoadingOverlay
-        visible={!globeVisualReady && !webglFallback}
-        isLightBasemap={theme.isLight}
-        label={mode === "globe" ? "Loading 3D Earth globe" : "Loading Earth territory map"}
+        visible={(!globeVisualReady || satelliteLoading) && !webglFallback}
+        isLightBasemap={satelliteLoading ? false : theme.isLight}
+        label={
+          satelliteLoading
+            ? "Loading NASA Blue Marble satellite view"
+            : mode === "globe"
+            ? "Loading 3D Earth globe"
+            : "Loading Earth territory map"
+        }
       />
 
       {webglFallback && (
@@ -2016,4 +2110,4 @@ export function GeoMap({
       </div>
     </div>
   );
-}
+});
