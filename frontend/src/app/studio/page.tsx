@@ -9,6 +9,7 @@ import {
   Eye,
   EyeOff,
   FolderOpen,
+  Info,
   Minus,
   Plus,
   Share2,
@@ -80,6 +81,7 @@ export default function StudioPage() {
     backendStatus,
     refreshBackendConnection,
     setActiveLayer,
+    getLayerRestriction,
     setBasemapMode,
     setLayerVisible,
     setLayerOpacity,
@@ -101,6 +103,7 @@ export default function StudioPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const layerDef = getLayerDefinition(activeLayer);
+  const pm25Restriction = getLayerRestriction("PM25_RH35");
   const compositionSpec = useMemo(() => buildCompositionSpec(), [buildCompositionSpec]);
   const fittedZoom = useMemo(() => zoomForBounds(selection.bounds), [selection.bounds]);
 
@@ -279,6 +282,8 @@ export default function StudioPage() {
               <div className="b-studio-var-strip" role="radiogroup" aria-label="Atmospheric variable">
                 {layers.map((item) => {
                   const active = item.key === activeLayer;
+                  const restriction = getLayerRestriction(item.key);
+                  const isDisabled = !item.available || Boolean(restriction);
                   return (
                     <button
                       key={item.key}
@@ -286,10 +291,16 @@ export default function StudioPage() {
                       role="radio"
                       aria-checked={active}
                       className={active ? "is-active" : undefined}
-                      disabled={!item.available}
-                      title={!item.available ? item.methodologyNote : item.label}
+                      disabled={isDisabled}
+                      title={
+                        restriction
+                          ? restriction.shortReason
+                          : !item.available
+                            ? item.methodologyNote
+                            : item.label
+                      }
                       onClick={() => {
-                        if (item.available) setActiveLayer(item.key);
+                        if (!isDisabled) setActiveLayer(item.key);
                       }}
                     >
                       {item.short}
@@ -321,6 +332,13 @@ export default function StudioPage() {
                 <span className="b-tabular">{layerVisible ? `${Math.round(layerOpacity * 100)}%` : "Off"}</span>
               </div>
             </div>
+
+            {pm25Restriction && (
+              <div className="b-layer-restriction-note" role="status" aria-live="polite">
+                <Info size={13} aria-hidden="true" />
+                <span>{pm25Restriction.notice}</span>
+              </div>
+            )}
 
             <div className="b-studio-map">
               <GeoMap
@@ -370,6 +388,7 @@ export default function StudioPage() {
             <AudioTransport
               title={`${selection.name} · ${layerDef.short}`}
               spec={compositionSpec}
+              hideContext
               onStepSlot={handleStepSlot}
             />
 
@@ -494,44 +513,47 @@ export default function StudioPage() {
             </div>
 
             <div className="b-settings-panel">
-              <div>
-                <span>TEMPO</span>
-                <strong className="b-tabular">
-                  {mapping.tempo}
-                  <small> BPM</small>
-                </strong>
-                <div>
-                  <button
-                    type="button"
-                    aria-label="Decrease tempo"
-                    onClick={() => updateMapping({ tempo: Math.max(56, mapping.tempo - 4) })}
-                  >
-                    <Minus size={12} />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Increase tempo"
-                    onClick={() => updateMapping({ tempo: Math.min(160, mapping.tempo + 4) })}
-                  >
-                    <Plus size={12} />
-                  </button>
+              <div className="b-setting-group b-setting-group-tempo">
+                <span className="b-setting-label">TEMPO</span>
+                <div className="b-tempo-head">
+                  <strong className="b-tabular">
+                    {mapping.tempo}
+                    <small> BPM</small>
+                  </strong>
+                  <div className="b-tempo-stepper">
+                    <button
+                      type="button"
+                      aria-label="Decrease tempo"
+                      onClick={() => updateMapping({ tempo: Math.max(56, mapping.tempo - 4) })}
+                    >
+                      <Minus size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Increase tempo"
+                      onClick={() => updateMapping({ tempo: Math.min(160, mapping.tempo + 4) })}
+                    >
+                      <Plus size={12} />
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              <div style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", color: "var(--muted)" }}>KEY</span>
+              <div className="b-setting-group">
+                <span className="b-setting-label">KEY</span>
                 <CustomSelect
                   value={mapping.musicalKey}
                   options={MUSICAL_KEYS.map((k) => ({ value: k, label: k }))}
                   onChange={(val) => updateMapping({ musicalKey: val })}
                   compact
+                  dropdownAlign="right"
                   searchPlaceholder="Filter key..."
                   ariaLabel="Musical scale key"
                 />
               </div>
 
-              <div style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", color: "var(--muted)" }}>WAVEFORM</span>
+              <div className="b-setting-group">
+                <span className="b-setting-label">WAVEFORM</span>
                 <CustomSelect
                   value={mapping.waveform}
                   options={WAVEFORMS.map((wf) => ({
@@ -540,6 +562,7 @@ export default function StudioPage() {
                   }))}
                   onChange={(val) => updateMapping({ waveform: val as OscillatorWaveform })}
                   compact
+                  dropdownAlign="right"
                   searchable={false}
                   ariaLabel="Oscillator waveform"
                 />
