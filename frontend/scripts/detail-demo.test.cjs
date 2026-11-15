@@ -114,8 +114,8 @@ test('Actual native cache matches baseline scientific means and covers all six v
   if (!fs.existsSync(catalogPath)) { t.skip('Native NASA cache is intentionally local-only'); return; }
   const { prepareDetail } = await load('geos-cf-data');
   const index = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
-  const entry = index.entries.find(e => e.status === 'ready' && e.detail_url);
-  if (!entry) { t.skip('No verified native export'); return; }
+  const entry = index.entries.find(e => e.status === 'ready' && e.detail_url && e.snapshot_url);
+  if (!entry) { t.skip('No verified snapshot+detail baseline export'); return; }
   const manifest = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../public' + entry.detail_url), 'utf8'));
   const baseline = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../public' + entry.snapshot_url), 'utf8')).baseline;
   for (const key of Object.keys(manifest.fields)) {
