@@ -106,22 +106,50 @@ class BoundingBoxInput(BaseModel):
 
 
 class RegionJukeboxRequest(BaseModel):
-    """Request payload for Single-ROI drag-box spatial aggregation and sonification."""
+    """Request payload for Single-ROI (bounding box, center, or polygon/MultiPolygon border) spatial aggregation."""
     datasetId: str = Field("geos-cf-v2-aqc", description="Target dataset identifier")
     timestamp: str = Field(..., description="ISO 8601 UTC timestamp")
     variable: str = Field("PM25_RH35", description="Atmospheric variable to aggregate")
-    bounds: Optional[BoundingBoxInput] = Field(None, description="Explicit drag-box bounds")
+    bounds: Optional[BoundingBoxInput] = Field(None, description="Explicit drag-box or border bounding box")
     center: Optional[CoordinatePair] = Field(None, description="Optional ROI center when bounds omitted")
     deltaDeg: float = Field(0.5, gt=0.0, le=30.0, description="Half-width in degrees when center is used")
+    polygon: Optional[List[CoordinatePair]] = Field(
+        None,
+        min_length=3,
+        max_length=2500,
+        description="Optional single outer polygon boundary [(lat, lon), ...] for non-rectangular ROI masking",
+    )
+    polygons: Optional[List[List[CoordinatePair]]] = Field(
+        None,
+        min_length=1,
+        max_length=64,
+        description="Optional list of outer polygon rings (MultiPolygon islands/parts) for territory masking",
+    )
     normalizationMethod: NormalizationMethodType = Field(
         "log_scale",
         description="Normalization strategy (defaults to EDA-calibrated 'log_scale' for perceptual audio)",
     )
 
+    @field_validator("polygons")
+    @classmethod
+    def validate_polygon_rings(
+        cls, rings: Optional[List[List[CoordinatePair]]]
+    ) -> Optional[List[List[CoordinatePair]]]:
+        if rings is None:
+            return None
+        total_vertices = 0
+        for idx, ring in enumerate(rings):
+            if len(ring) < 3:
+                raise ValueError(f"Polygon ring at index {idx} must contain at least 3 vertices.")
+            total_vertices += len(ring)
+        if total_vertices > 5000:
+            raise ValueError(f"Total polygon vertex count ({total_vertices}) exceeds maximum limit of 5000.")
+        return rings
+
     @model_validator(mode="after")
     def validate_bounds_or_center(self) -> "RegionJukeboxRequest":
-        if self.bounds is None and self.center is None:
-            raise ValueError("Either 'bounds' or 'center' must be provided for ROI query.")
+        if self.bounds is None and self.center is None and self.polygon is None and self.polygons is None:
+            raise ValueError("One of 'bounds', 'center', 'polygon', or 'polygons' must be provided for ROI query.")
         return self
 
 
@@ -151,8 +179,9 @@ class RegionSummaryMetrics(BaseModel):
 
 
 class RegionJukeboxResponse(BaseModel):
-    """Response payload for Single-ROI drag-box spatial aggregation and sonification."""
+    """Response payload for Single-ROI spatial aggregation and sonification."""
     mode: Literal["region"] = "region"
+    maskMode: Literal["bounds", "polygon"] = "bounds"
     datasetId: str
     variable: str
     timestamp: str
