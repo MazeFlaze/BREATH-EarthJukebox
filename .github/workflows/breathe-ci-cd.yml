@@ -213,45 +213,25 @@ jobs:
           # 2. Ensure Azure Storage Account & File Share for verified GEOS-CF catalog
           CATALOG_SHARE_NAME="geos-cf-catalog"
           CATALOG_MOUNT_PATH="/app/data/geos-cf-catalog"
-          ENV_LOCATION=$(az containerapp env show --name "${ENVIRONMENT_NAME}" --resource-group "${RESOURCE_GROUP}" --query location -o tsv)
-          STORAGE_ACCOUNT="${AZURE_STORAGE_ACCOUNT}"
-          if [ -z "$STORAGE_ACCOUNT" ]; then
-            STORAGE_ACCOUNT=$(az storage account list --resource-group "${RESOURCE_GROUP}" --query "[?starts_with(name, 'stbreathe')].name | [0]" -o tsv 2>/dev/null || echo "")
-          fi
-          if [ -z "$STORAGE_ACCOUNT" ]; then
-            STORAGE_ACCOUNT=$(az storage account list --resource-group "${RESOURCE_GROUP}" --query "[0].name" -o tsv 2>/dev/null || echo "")
-          fi
-          if [ -z "$STORAGE_ACCOUNT" ]; then
-            STORAGE_ACCOUNT="stbreathe$(printf '%s' "${RESOURCE_GROUP}" | sha256sum | cut -c1-12)"
-            echo "Creating Azure Storage Account (${STORAGE_ACCOUNT}) in ${ENV_LOCATION}..."
-            az storage account create \
-              --name "${STORAGE_ACCOUNT}" \
+          CATALOG_STORAGE_READY="false"
+          ENV_LOCATION=$(az containerapp env show --name "${ENVIRONMENT_NAME}" --resource-group "${RESOURCE_GROUP}" --query location -o tsv 2>/dev/null || echo "${LOCATION}")
+          if STORAGE_ACCOUNT=$(bash ./scripts/ensure-azure-catalog-storage.sh "${RESOURCE_GROUP}" "${ENV_LOCATION}" "${CATALOG_SHARE_NAME}"); then
+            STORAGE_KEY=$(az storage account keys list --account-name "${STORAGE_ACCOUNT}" --resource-group "${RESOURCE_GROUP}" --query "[0].value" -o tsv)
+            if az containerapp env storage set \
+              --name "${ENVIRONMENT_NAME}" \
               --resource-group "${RESOURCE_GROUP}" \
-              --location "${ENV_LOCATION}" \
-              --sku Standard_LRS \
-              --kind StorageV2 \
-              --min-tls-version TLS1_2 \
-              --allow-blob-public-access false \
-              --output table
-          else
-            echo "Reusing Azure Storage Account: ${STORAGE_ACCOUNT}"
+              --storage-name "${CATALOG_SHARE_NAME}" \
+              --azure-file-account-name "${STORAGE_ACCOUNT}" \
+              --azure-file-account-key "${STORAGE_KEY}" \
+              --azure-file-share-name "${CATALOG_SHARE_NAME}" \
+              --access-mode ReadOnly \
+              --output none; then
+              CATALOG_STORAGE_READY="true"
+            fi
           fi
-          STORAGE_KEY=$(az storage account keys list --account-name "${STORAGE_ACCOUNT}" --resource-group "${RESOURCE_GROUP}" --query "[0].value" -o tsv)
-          az storage share create \
-            --name "${CATALOG_SHARE_NAME}" \
-            --account-name "${STORAGE_ACCOUNT}" \
-            --account-key "${STORAGE_KEY}" \
-            --quota 10 \
-            --output none
-          az containerapp env storage set \
-            --name "${ENVIRONMENT_NAME}" \
-            --resource-group "${RESOURCE_GROUP}" \
-            --storage-name "${CATALOG_SHARE_NAME}" \
-            --azure-file-account-name "${STORAGE_ACCOUNT}" \
-            --azure-file-account-key "${STORAGE_KEY}" \
-            --azure-file-share-name "${CATALOG_SHARE_NAME}" \
-            --access-mode ReadOnly \
-            --output none
+          if [ "${CATALOG_STORAGE_READY}" != "true" ]; then
+            echo "::warning ::Could not provision Azure File Share '${CATALOG_SHARE_NAME}' in '${RESOURCE_GROUP}'. Deploying backend without catalog mount (register Microsoft.Storage or set vars.AZURE_STORAGE_ACCOUNT and re-run)."
+          fi
 
           # 3. Deploy or Update Backend Container App (Scale-to-Zero: min-replicas 0)
           BACKEND_APP="breathe-backend"
@@ -300,7 +280,8 @@ jobs:
                 GEOS_CF_CATALOG_ROOT="${CATALOG_MOUNT_PATH}"
           fi
 
-          # Ensure ReadOnly Azure File Share volume mount stays attached on breathe-backend
+          # Ensure ReadOnly Azure File Share volume mount stays attached on breathe-backend when storage is provisioned
+          if [ "${CATALOG_STORAGE_READY}" = "true" ]; then
           BACKEND_JSON=$(mktemp /tmp/breathe-backend-app-XXXXXX.json)
           CATALOG_PATCH_YAML=$(mktemp /tmp/breathe-backend-mount-XXXXXX.yaml)
           trap 'rm -f "${BACKEND_JSON}" "${CATALOG_PATCH_YAML}"' EXIT
@@ -347,6 +328,9 @@ jobs:
               --output none
           else
             echo "Verified catalog volume mount (${CATALOG_MOUNT_PATH}) already attached."
+          fi
+          else
+            echo "Skipping Azure File Share volume mount patch because catalog storage was not provisioned."
           fi
 
           BACKEND_FQDN=$(az containerapp show --name "${BACKEND_APP}" --resource-group "${RESOURCE_GROUP}" --query properties.configuration.ingress.fqdn -o tsv)
