@@ -133,9 +133,13 @@ jobs:
           ENVIRONMENT_NAME="cae-breathe"
 
           # 1. Ensure Container Apps Managed Environment exists
-          echo "Checking Container Apps Environment: ${ENVIRONMENT_NAME} in ${LOCATION}..."
-          if ! az containerapp env show --name "${ENVIRONMENT_NAME}" --resource-group "${RESOURCE_GROUP}" > /dev/null 2>&1; then
-            echo "Creating Container Apps Environment: ${ENVIRONMENT_NAME}..."
+          EXISTING_ENV=$(az containerapp env list --resource-group "${RESOURCE_GROUP}" --query "[0].name" -o tsv 2>/dev/null || echo "")
+          if [ -n "$EXISTING_ENV" ]; then
+            ENVIRONMENT_NAME="$EXISTING_ENV"
+            echo "Reusing existing Container Apps Environment: ${ENVIRONMENT_NAME}"
+          else
+            ENVIRONMENT_NAME="cae-breathe"
+            echo "Creating Container Apps Environment: ${ENVIRONMENT_NAME} in ${LOCATION}..."
             az containerapp env create \
               --name "${ENVIRONMENT_NAME}" \
               --resource-group "${RESOURCE_GROUP}" \
