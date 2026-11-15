@@ -69,7 +69,7 @@ export function BasemapSwitcher({
 const NAV_ITEMS = [
   { href: "/", label: "Overview" },
   { href: "/explore", label: "Explore" },
-  { href: "/studio", label: "Sonification" },
+  { href: "/studio", label: "Create" },
   { href: "/learn", label: "Learning Lab" },
   { href: "/gallery", label: "Gallery" },
 ];
