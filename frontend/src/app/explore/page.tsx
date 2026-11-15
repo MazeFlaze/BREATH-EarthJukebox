@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -94,6 +94,12 @@ export default function ExplorePage() {
   } = useBreathe();
 
   const [tab, setTab] = useState<"sound" | "data" | "about">("sound");
+  const [, startTransition] = useTransition();
+  const handleTabChange = (nextTab: "sound" | "data" | "about") => {
+    startTransition(() => {
+      setTab(nextTab);
+    });
+  };
   const [drawTool, setDrawTool] = useState<MapDrawTool>("select");
   const [scanLocked, setScanLocked] = useState(false);
   const [timelinePlaying, setTimelinePlaying] = useState(false);
@@ -574,7 +580,7 @@ export default function ExplorePage() {
               role="tab"
               aria-selected={tab === "sound"}
               className={tab === "sound" ? "is-active" : undefined}
-              onClick={() => setTab("sound")}
+              onClick={() => handleTabChange("sound")}
             >
               Sound preview
             </button>
@@ -583,7 +589,7 @@ export default function ExplorePage() {
               role="tab"
               aria-selected={tab === "data"}
               className={tab === "data" ? "is-active" : undefined}
-              onClick={() => setTab("data")}
+              onClick={() => handleTabChange("data")}
             >
               Region data
             </button>
@@ -592,13 +598,16 @@ export default function ExplorePage() {
               role="tab"
               aria-selected={tab === "about"}
               className={tab === "about" ? "is-active" : undefined}
-              onClick={() => setTab("about")}
+              onClick={() => handleTabChange("about")}
             >
               About
             </button>
           </div>
 
-          {tab === "sound" && (
+          <div
+            role="tabpanel"
+            className={`b-tab-pane ${tab === "sound" ? "is-active" : "is-hidden"}`}
+          >
             <div className="b-preview-content">
               <h2>{selection.name}</h2>
               <p className="b-muted b-tabular">{formatUtc(timeSlots[timeIndex] ?? timeSlots[0])}</p>
@@ -634,9 +643,12 @@ export default function ExplorePage() {
               </Link>
               <p className="b-footnote">{regionStats.sourceLabel} · Web Audio synthesizer</p>
             </div>
-          )}
+          </div>
 
-          {tab === "data" && (
+          <div
+            role="tabpanel"
+            className={`b-tab-pane ${tab === "data" ? "is-active" : "is-hidden"}`}
+          >
             <div className="b-preview-content">
               <h2>{selection.name}</h2>
               <p className="b-muted b-tabular">{formatBounds(selection.bounds)}</p>
@@ -702,9 +714,12 @@ export default function ExplorePage() {
                 <ArrowRight size={15} />
               </Link>
             </div>
-          )}
+          </div>
 
-          {tab === "about" && (
+          <div
+            role="tabpanel"
+            className={`b-tab-pane ${tab === "about" ? "is-active" : "is-hidden"}`}
+          >
             <div className="b-preview-content b-about-tab">
               <span className="b-about-kicker b-tabular">
                 {layerDef.short} · {layerDef.unit}
@@ -756,7 +771,7 @@ export default function ExplorePage() {
                 </p>
               </div>
             </div>
-          )}
+          </div>
         </aside>
       </div>
 
