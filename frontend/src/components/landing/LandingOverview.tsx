@@ -55,6 +55,12 @@ export default function LandingOverview() {
           />
 
           <div className="relative z-10 flex max-w-xl flex-col items-center text-center">
+            {/* Organic Feathered Dark Cushion tightly hugging the text (Cocoon style) */}
+            <div
+              className="pointer-events-none absolute -inset-x-6 top-16 bottom-8 -z-10 rounded-full bg-black/75 blur-2xl"
+              aria-hidden="true"
+            />
+
             <AirflowLogo size={72} className="mb-7" />
 
             <span className="mb-3 text-[11px] uppercase tracking-[0.22em] text-white/55">
@@ -69,7 +75,7 @@ export default function LandingOverview() {
 
             <blockquote
               key={quoteIndex}
-              className="mt-7 max-w-md text-sm italic leading-relaxed text-white/65 sm:text-base"
+              className="animate-quote-swap mt-7 max-w-md text-sm italic leading-relaxed text-white/75 sm:text-base"
             >
               “{QUOTES[quoteIndex]}”
             </blockquote>
