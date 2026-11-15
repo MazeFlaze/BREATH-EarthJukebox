@@ -16,9 +16,11 @@ services:
       - PORT=8000
       - ENVIRONMENT=production
       - DEBUG=False
+      - GEOS_CF_CATALOG_ROOT=/app/data/geos-cf-catalog
       - CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000"]
     volumes:
       - backend-data:/app/src/data/raw
+      - ./frontend/public/data/geos-cf-catalog:/app/data/geos-cf-catalog:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
       interval: 30s
