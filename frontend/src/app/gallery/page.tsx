@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   Bookmark,
+  Check,
+  ChevronDown,
   Clock,
   Globe,
   MapPin,
@@ -12,14 +14,15 @@ import {
   Play,
   Search,
   SlidersHorizontal,
+  X,
 } from "lucide-react";
 import { MapArtworkThumbnail } from "@/components/breathe/MapArtworkThumbnail";
 import { DataBadge, SiteFooter } from "@/components/breathe/SharedUI";
 import { AudioTransport } from "@/components/breathe/SoundVisuals";
 import { useBreathe } from "@/context/BreatheContext";
 import { useSonification } from "@/hooks/useSonification";
-import { galleryWorks, getLayerDefinition } from "@/lib/breatheData";
-import type { AudioCompositionSpec, GalleryWork } from "@/types/breathe";
+import { galleryWorks, getLayerDefinition, layers } from "@/lib/breatheData";
+import type { AudioCompositionSpec, GalleryWork, LayerKey } from "@/types/breathe";
 
 function workToSpec(work: GalleryWork): AudioCompositionSpec {
   const layer = getLayerDefinition(work.variable);
@@ -52,7 +55,27 @@ export default function GalleryPage() {
 
   const [tab, setTab] = useState<"curated" | "trending" | "recent" | "mine">("curated");
   const [query, setQuery] = useState("");
-  const [pm25Only, setPm25Only] = useState(false);
+  const [variableFilter, setVariableFilter] = useState<LayerKey | "ALL">("ALL");
+  const [filterOpen, setFilterOpen] = useState(false);
+  const filterMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!filterOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (filterMenuRef.current && !filterMenuRef.current.contains(event.target as Node)) {
+        setFilterOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFilterOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [filterOpen]);
 
   const allWorks = useMemo(() => {
     const map = new Map<string, GalleryWork>();
@@ -63,30 +86,52 @@ export default function GalleryPage() {
 
   const [selectedId, setSelectedId] = useState<string>(galleryWorks[0].id);
 
-  const filtered = useMemo(() => {
-    let base: GalleryWork[];
+  const tabWorks = useMemo(() => {
     if (tab === "mine") {
-      base = allWorks.filter((w) => w.isUserSaved || bookmarkedIds.includes(w.id));
-    } else if (tab === "trending") {
-      base = [...allWorks].sort((a, b) => b.mappings.density - a.mappings.density);
-    } else if (tab === "recent") {
-      base = [...allWorks].reverse();
-    } else {
-      base = galleryWorks;
+      return allWorks.filter((w) => w.isUserSaved || bookmarkedIds.includes(w.id));
     }
+    if (tab === "trending") {
+      return [...allWorks].sort((a, b) => b.mappings.density - a.mappings.density);
+    }
+    if (tab === "recent") {
+      return [...allWorks].reverse();
+    }
+    return galleryWorks;
+  }, [tab, allWorks, bookmarkedIds]);
 
+  const variableOptions = useMemo(() => layers.filter((layer) => layer.available), []);
+
+  const variableCounts = useMemo(() => {
+    const counts: Partial<Record<LayerKey, number>> = {};
+    for (const work of tabWorks) {
+      counts[work.variable] = (counts[work.variable] ?? 0) + 1;
+    }
+    return counts;
+  }, [tabWorks]);
+
+  const activeFilterDef = useMemo(
+    () => (variableFilter === "ALL" ? null : getLayerDefinition(variableFilter)),
+    [variableFilter]
+  );
+
+  const hasActiveFilters = variableFilter !== "ALL" || query.trim().length > 0;
+
+  const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return base.filter((w) => {
-      if (pm25Only && w.variable !== "PM25_RH35") return false;
+    return tabWorks.filter((w) => {
+      if (variableFilter !== "ALL" && w.variable !== variableFilter) return false;
       if (!q) return true;
+      const layerDef = getLayerDefinition(w.variable);
       return (
         w.title.toLowerCase().includes(q) ||
         w.region.toLowerCase().includes(q) ||
         w.creator.toLowerCase().includes(q) ||
-        w.variable.toLowerCase().includes(q)
+        w.variable.toLowerCase().includes(q) ||
+        layerDef.short.toLowerCase().includes(q) ||
+        layerDef.label.toLowerCase().includes(q)
       );
     });
-  }, [tab, allWorks, bookmarkedIds, query, pm25Only]);
+  }, [tabWorks, query, variableFilter]);
 
   const featured =
     allWorks.find((w) => w.id === selectedId) ?? filtered[0] ?? galleryWorks[0];
@@ -153,27 +198,145 @@ export default function GalleryPage() {
               ))}
             </div>
 
-            <div className="b-gallery-search">
-              <Search size={14} aria-hidden="true" />
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search works or regions..."
-                aria-label="Search gallery works or geographic regions"
-              />
-              <button
-                type="button"
-                className={`b-icon-button ${pm25Only ? "is-active" : ""}`}
-                onClick={() => setPm25Only((v) => !v)}
-                aria-pressed={pm25Only}
-                aria-label="Filter PM2.5 works only"
-                title={pm25Only ? "Showing PM2.5 works (click for all)" : "Filter PM2.5 only"}
-              >
-                <SlidersHorizontal size={14} />
-              </button>
+            <div className="b-gallery-controls">
+              <div className="b-gallery-search">
+                <Search size={14} aria-hidden="true" />
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search works or regions..."
+                  aria-label="Search gallery works or geographic regions"
+                />
+                {query.length > 0 && (
+                  <button
+                    type="button"
+                    className="b-gallery-search-clear"
+                    onClick={() => setQuery("")}
+                    aria-label="Clear search query"
+                    title="Clear search"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+
+              <div className="b-gallery-filter-wrap" ref={filterMenuRef}>
+                <button
+                  type="button"
+                  className={`b-gallery-filter-btn ${variableFilter !== "ALL" ? "is-active" : ""}`}
+                  onClick={() => setFilterOpen((open) => !open)}
+                  aria-expanded={filterOpen}
+                  aria-haspopup="listbox"
+                  aria-label="Filter gallery works by atmospheric variable"
+                >
+                  <SlidersHorizontal size={13} aria-hidden="true" />
+                  <span>
+                    Filter: <strong>{activeFilterDef ? activeFilterDef.short : "All"}</strong>
+                  </span>
+                  <ChevronDown
+                    size={13}
+                    className={filterOpen ? "is-open" : undefined}
+                    aria-hidden="true"
+                  />
+                </button>
+
+                {filterOpen && (
+                  <div
+                    className="b-gallery-filter-menu"
+                    role="listbox"
+                    aria-label="Atmospheric variable filter"
+                  >
+                    <div className="b-gallery-filter-heading">Atmospheric variable</div>
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={variableFilter === "ALL"}
+                      className={`b-gallery-filter-option ${variableFilter === "ALL" ? "is-selected" : ""}`}
+                      onClick={() => {
+                        setVariableFilter("ALL");
+                        setFilterOpen(false);
+                      }}
+                    >
+                      <span className="b-gallery-filter-option-main">
+                        <strong>All variables</strong>
+                        <small>Every available dataset</small>
+                      </span>
+                      <span className="b-gallery-filter-count">{tabWorks.length}</span>
+                      {variableFilter === "ALL" && <Check size={13} aria-hidden="true" />}
+                    </button>
+
+                    {variableOptions.map((layer) => {
+                      const count = variableCounts[layer.key] ?? 0;
+                      const isSelected = variableFilter === layer.key;
+                      return (
+                        <button
+                          key={layer.key}
+                          type="button"
+                          role="option"
+                          aria-selected={isSelected}
+                          className={`b-gallery-filter-option ${isSelected ? "is-selected" : ""}`}
+                          onClick={() => {
+                            setVariableFilter(layer.key);
+                            setFilterOpen(false);
+                          }}
+                        >
+                          <span className="b-gallery-filter-option-main">
+                            <strong>{layer.short}</strong>
+                            <small>{layer.label}</small>
+                          </span>
+                          <span className="b-gallery-filter-count">{count}</span>
+                          {isSelected && <Check size={13} aria-hidden="true" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
+
+          {hasActiveFilters && (
+            <div className="b-gallery-active-bar" role="status" aria-live="polite">
+              <span className="b-gallery-active-summary">
+                Showing {filtered.length} of {tabWorks.length} works
+              </span>
+              {activeFilterDef && (
+                <button
+                  type="button"
+                  className="b-gallery-filter-chip"
+                  onClick={() => setVariableFilter("ALL")}
+                  aria-label={`Remove ${activeFilterDef.short} variable filter`}
+                >
+                  <span>
+                    Variable: <strong>{activeFilterDef.short}</strong>
+                  </span>
+                  <X size={12} aria-hidden="true" />
+                </button>
+              )}
+              {query.trim().length > 0 && (
+                <button
+                  type="button"
+                  className="b-gallery-filter-chip"
+                  onClick={() => setQuery("")}
+                  aria-label="Clear search term filter"
+                >
+                  <span>Search: “{query.trim()}”</span>
+                  <X size={12} aria-hidden="true" />
+                </button>
+              )}
+              <button
+                type="button"
+                className="b-gallery-clear-all"
+                onClick={() => {
+                  setVariableFilter("ALL");
+                  setQuery("");
+                }}
+              >
+                Clear all
+              </button>
+            </div>
+          )}
 
           <div className="b-gallery-grid">
             {filtered.map((work) => {
@@ -240,9 +403,25 @@ export default function GalleryPage() {
 
           {filtered.length === 0 && (
             <div className="b-gallery-empty">
-              {tab === "mine"
-                ? "Bookmark any concept work or click Save inside Studio to populate My Works."
-                : "No atmospheric works matched that filter."}
+              <p>
+                {hasActiveFilters
+                  ? `No works matched${activeFilterDef ? ` variable ${activeFilterDef.short}` : ""}${query.trim() ? ` for “${query.trim()}”` : ""}.`
+                  : tab === "mine"
+                    ? "Bookmark any concept work or click Save inside Studio to populate My Works."
+                    : "No atmospheric works matched that filter."}
+              </p>
+              {hasActiveFilters && (
+                <button
+                  type="button"
+                  className="b-button b-button-secondary"
+                  onClick={() => {
+                    setVariableFilter("ALL");
+                    setQuery("");
+                  }}
+                >
+                  Reset filters
+                </button>
+              )}
             </div>
           )}
 

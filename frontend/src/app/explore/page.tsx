@@ -8,6 +8,7 @@ import {
   Globe,
   Grid,
   Hand,
+  Info,
   Layers,
   Map as MapIcon,
   PenTool,
@@ -70,6 +71,7 @@ export default function ExplorePage() {
     canUndoPolygon,
     canRedoPolygon,
     setActiveLayer,
+    getLayerRestriction,
     setBasemapMode,
     setLayerVisible,
     setLayerOpacity,
@@ -97,6 +99,7 @@ export default function ExplorePage() {
   const [searchError, setSearchError] = useState<string | null>(null);
 
   const layerDef = getLayerDefinition(activeLayer);
+  const pm25Restriction = getLayerRestriction("PM25_RH35");
   const compositionSpec = useMemo(() => buildCompositionSpec(), [buildCompositionSpec]);
 
   useEffect(() => {
@@ -358,7 +361,14 @@ export default function ExplorePage() {
               onToggleVisible={() => setLayerVisible(!layerVisible)}
               layerOpacity={layerOpacity}
               onOpacityChange={setLayerOpacity}
+              getLayerDisabledReason={(key) => getLayerRestriction(key)?.shortReason ?? null}
             />
+            {pm25Restriction && (
+              <div className="b-layer-restriction-note is-sidebar" role="status" aria-live="polite">
+                <Info size={13} aria-hidden="true" />
+                <span>{pm25Restriction.notice}</span>
+              </div>
+            )}
           </div>
 
           <div className="b-sidebar-section">
@@ -672,18 +682,56 @@ export default function ExplorePage() {
           )}
 
           {tab === "about" && (
-            <div className="b-preview-content">
+            <div className="b-preview-content b-about-tab">
+              <span className="b-about-kicker b-tabular">
+                {layerDef.short} · {layerDef.unit}
+              </span>
               <h2>{layerDef.label}</h2>
-              <p className="b-muted">{layerDef.description}</p>
-              <div className="b-about-callout">
-                <strong>Policy note:</strong> {layerDef.methodologyNote} Dimensionless Aerosol
-                Optical Depth (AOD) and Air Quality Index (AQI) are never substituted for surface{" "}
-                {layerDef.short}.
+              <p className="b-about-desc">{layerDef.description}</p>
+
+              <div className="b-metric-list b-about-specs">
+                <div>
+                  <span>Variable ID</span>
+                  <strong className="b-tabular">{layerDef.key}</strong>
+                </div>
+                <div>
+                  <span>Display scale</span>
+                  <strong className="b-tabular">
+                    {layerDef.vmin}–{layerDef.vmax} {layerDef.unit}
+                  </strong>
+                </div>
+                <div>
+                  <span>Color ramp</span>
+                  <strong className="b-about-cmap">{layerDef.cmap}</strong>
+                </div>
+                <div>
+                  <span>Source stream</span>
+                  <strong>
+                    {layerDef.available ? "NASA GMAO GEOS-CF v2" : "MODIS / VIIRS (pending)"}
+                  </strong>
+                </div>
               </div>
-              <Link href="/learn" className="b-button b-button-secondary b-full-button">
-                <span>Explore methods in Learning Lab</span>
-                <ArrowRight size={14} />
-              </Link>
+
+              <div className="b-about-callout">
+                <Info size={15} aria-hidden="true" />
+                <div>
+                  <strong>Scientific policy note</strong>
+                  <p>
+                    {layerDef.methodologyNote} Dimensionless Aerosol Optical Depth (AOD) and Air
+                    Quality Index (AQI) are never substituted for surface {layerDef.short}.
+                  </p>
+                </div>
+              </div>
+
+              <div className="b-about-footer">
+                <Link href="/learn" className="b-button b-button-secondary b-full-button">
+                  <span>Explore methods in Learning Lab</span>
+                  <ArrowRight size={14} />
+                </Link>
+                <p className="b-footnote">
+                  Independent variable scale · Earth observation methodology
+                </p>
+              </div>
             </div>
           )}
         </aside>
